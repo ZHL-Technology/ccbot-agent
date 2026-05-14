@@ -7,7 +7,7 @@ import sys
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import ttk
 
 from ccbot_agent.main import enroll, run_loop
 
@@ -19,6 +19,18 @@ APP_DIR = PROGRAM_DATA / "CCBotAgent"
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
 TASK_NAME = "CCBot Agent"
+
+TERMS_TEXT = """CCBot Agent will enroll this Windows device with CyberCare AI and start continuous monitoring for security hygiene and system health signals.
+
+By continuing, you confirm that:
+
+1. You own this device or have permission to monitor it.
+2. You understand that CCBot collects operational evidence such as hostname, operating system details, disk usage, listening ports, update hints, and service health signals.
+3. CCBot does not intentionally read personal documents in this preview, but operational data can include sensitive names, paths, services, package names, usernames, and process metadata.
+4. You are responsible for reviewing alerts, recommendations, and any future remediation steps before applying changes.
+5. A valid CyberCare AI plan and one-time install token are required for activation.
+
+Only continue if you understand and agree to these conditions."""
 
 
 def write_config(platform_url, enrollment_token):
@@ -49,7 +61,7 @@ def current_executable_target():
 
 def create_startup_task(executable):
     command = f'"{executable}" --agent-run --config "{CONFIG_PATH}"'
-    subprocess.run(
+    completed = subprocess.run(
         [
             "schtasks",
             "/Create",
@@ -66,6 +78,9 @@ def create_startup_task(executable):
         stderr=subprocess.PIPE,
         text=True,
     )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "Windows did not return a detailed error."
+        raise RuntimeError(f"Could not create the Windows startup task. {detail}")
 
 
 def start_agent(executable):
@@ -76,28 +91,45 @@ def start_agent(executable):
     )
 
 
-def install(platform_url, enrollment_token, status_callback):
+def install(platform_url, enrollment_token, status_callback, progress_callback, log_callback):
     if not enrollment_token.strip():
         raise ValueError("Paste the one-time install token from CyberCare AI.")
-    status_callback("Writing local configuration...")
+
+    def step(percent, message):
+        status_callback(message)
+        progress_callback(percent)
+        log_callback(message)
+
+    step(8, "Checking installer inputs...")
+    platform_url = platform_url.strip() or DEFAULT_PLATFORM_URL
+    if not platform_url.startswith(("http://", "https://")):
+        raise ValueError("Platform URL must start with https:// or http://.")
+
+    step(20, "Writing local configuration...")
     write_config(platform_url, enrollment_token)
-    status_callback("Enrolling this Windows device...")
-    enroll(str(CONFIG_PATH))
-    status_callback("Preparing startup task...")
+    step(45, "Enrolling this Windows device with CyberCare AI...")
+    try:
+        enroll(str(CONFIG_PATH))
+    except BaseException as exc:
+        message = str(exc) or exc.__class__.__name__
+        raise RuntimeError(message) from exc
+
+    step(65, "Preparing startup task...")
     executable = current_executable_target()
     create_startup_task(executable)
-    status_callback("Starting CCBot...")
+
+    step(82, "Starting CCBot in the background...")
     start_agent(executable)
-    status_callback("CCBot is running. Check the dashboard after the first heartbeat.")
+    step(100, "Installation complete. CCBot is running. You can close this window.")
 
 
 def launch_gui():
     root = tk.Tk()
     root.title(APP_NAME)
-    root.geometry("520x360")
+    root.geometry("700x690")
     root.resizable(False, False)
 
-    frame = ttk.Frame(root, padding=22)
+    frame = ttk.Frame(root, padding=24)
     frame.pack(fill="both", expand=True)
 
     ttk.Label(frame, text="Install CCBot for Windows", font=("Segoe UI", 16, "bold")).pack(anchor="w")
@@ -115,26 +147,119 @@ def launch_gui():
     token_var = tk.StringVar()
     ttk.Entry(frame, textvariable=token_var, show="*").pack(fill="x", pady=(4, 14))
 
-    status_var = tk.StringVar(value="Ready")
-    ttk.Label(frame, textvariable=status_var, wraplength=460).pack(anchor="w", pady=(0, 14))
+    terms_box = ttk.LabelFrame(frame, text="Terms and responsibility")
+    terms_box.pack(fill="x", pady=(0, 12))
 
-    install_button = ttk.Button(frame, text="Install and start CCBot")
+    terms_content = ttk.Frame(terms_box)
+    terms_content.pack(fill="x", padx=10, pady=(8, 6))
+    terms_scrollbar = ttk.Scrollbar(terms_content, orient="vertical")
+    terms_text = tk.Text(
+        terms_content,
+        height=7,
+        wrap="word",
+        relief="flat",
+        padx=8,
+        pady=8,
+        yscrollcommand=terms_scrollbar.set,
+    )
+    terms_scrollbar.config(command=terms_text.yview)
+    terms_text.insert("1.0", TERMS_TEXT)
+    terms_text.configure(state="disabled")
+    terms_text.pack(side="left", fill="both", expand=True)
+    terms_scrollbar.pack(side="right", fill="y")
+
+    accepted_var = tk.BooleanVar(value=False)
+    terms_check = ttk.Checkbutton(
+        terms_box,
+        text="I have read and agree to these terms.",
+        variable=accepted_var,
+    )
+    terms_check.pack(anchor="w", padx=10, pady=(0, 10))
+
+    status_var = tk.StringVar(value="Ready")
+    ttk.Label(frame, textvariable=status_var, wraplength=630).pack(anchor="w", pady=(0, 8))
+
+    progress_var = tk.IntVar(value=0)
+    progress = ttk.Progressbar(frame, maximum=100, variable=progress_var)
+    progress.pack(fill="x", pady=(0, 12))
+
+    log_label = ttk.Label(frame, text="Installation log")
+    log_label.pack(anchor="w")
+    log_frame = ttk.Frame(frame)
+    log_frame.pack(fill="both", expand=True, pady=(4, 14))
+    log_scrollbar = ttk.Scrollbar(log_frame, orient="vertical")
+    log_text = tk.Text(
+        log_frame,
+        height=8,
+        wrap="word",
+        relief="solid",
+        borderwidth=1,
+        padx=8,
+        pady=8,
+        bg="#0f172a",
+        fg="#e5eefc",
+        insertbackground="#e5eefc",
+        yscrollcommand=log_scrollbar.set,
+    )
+    log_scrollbar.config(command=log_text.yview)
+    log_text.insert("1.0", "Ready. Paste your token, review the terms, then start installation.\n")
+    log_text.configure(state="disabled")
+    log_text.pack(side="left", fill="both", expand=True)
+    log_scrollbar.pack(side="right", fill="y")
+
+    actions = ttk.Frame(frame)
+    actions.pack(fill="x")
+
+    install_button = ttk.Button(actions, text="Install and start CCBot", state="disabled")
     install_button.pack(anchor="w")
 
     def set_status(message):
         root.after(0, lambda: status_var.set(message))
 
+    def set_progress(value):
+        root.after(0, lambda: progress_var.set(value))
+
+    def append_log(message):
+        def update():
+            log_text.configure(state="normal")
+            log_text.insert("end", f"{message}\n")
+            log_text.see("end")
+            log_text.configure(state="disabled")
+
+        root.after(0, update)
+
+    def inputs_valid():
+        return bool(token_var.get().strip()) and accepted_var.get()
+
+    def refresh_install_button(*_args):
+        install_button.configure(state="normal" if inputs_valid() else "disabled")
+
+    token_var.trace_add("write", refresh_install_button)
+    accepted_var.trace_add("write", refresh_install_button)
+
+    def set_inputs_state(state):
+        terms_check.configure(state=state)
+        for child in frame.winfo_children():
+            if isinstance(child, ttk.Entry):
+                child.configure(state=state)
+
+    def finish():
+        root.destroy()
+
     def run_install():
-        install_button.configure(state="disabled")
+        root.after(0, lambda: set_inputs_state("disabled"))
+        root.after(0, lambda: install_button.configure(state="disabled"))
+        set_progress(0)
         try:
-            install(platform_var.get(), token_var.get(), set_status)
-        except Exception as exc:
-            set_status("Installation failed.")
-            root.after(0, lambda: messagebox.showerror(APP_NAME, str(exc)))
+            install(platform_var.get(), token_var.get(), set_status, set_progress, append_log)
+        except BaseException as exc:
+            message = str(exc) or exc.__class__.__name__
+            set_status("Installation failed. Please review the log below.")
+            append_log(f"ERROR: {message}")
+            root.after(0, lambda: set_inputs_state("normal"))
+            root.after(0, refresh_install_button)
         else:
-            root.after(0, lambda: messagebox.showinfo(APP_NAME, "CCBot was installed and started."))
-        finally:
-            root.after(0, lambda: install_button.configure(state="normal"))
+            root.after(0, lambda: install_button.configure(text="Finish", state="normal", command=finish))
 
     install_button.configure(command=lambda: threading.Thread(target=run_install, daemon=True).start())
     root.mainloop()

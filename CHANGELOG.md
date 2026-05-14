@@ -4,6 +4,15 @@ All notable changes to CCBot Agent are documented here.
 
 The project follows semantic versioning.
 
+## 0.1.2 - 2026-05-14
+
+### Changed
+
+- Improved the Windows installer preview with an agreement checkbox, visible
+  progress bar, installation log, and clear Finish state.
+- Windows enrollment errors now remain visible in the installer instead of
+  failing silently in the background.
+
 ## 0.1.1 - 2026-05-14
 
 ### Added

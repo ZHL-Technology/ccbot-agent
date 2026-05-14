@@ -33,7 +33,7 @@ def main(argv):
         f'CCBOT_AGENT_VERSION="${{CCBOT_AGENT_VERSION:-{tag}}}"',
     )
 
-    print(f"Prepared CCBot Linux Agent {version}.")
+    print(f"Prepared CCBot Agent {version}.")
     print("Next: update CHANGELOG.md, commit, tag, and push.")
 
 
