@@ -44,8 +44,25 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install PyInstaller
-        run: python -m pip install pyinstaller
+      - name: Install build tools
+        run: python -m pip install pyinstaller pillow
+
+      - name: Generate Windows icon
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          from PIL import Image
+
+          source = Path("assets/ccbot.png")
+          target = Path("assets/ccbot.ico")
+          image = Image.open(source).convert("RGBA")
+          image.save(
+              target,
+              format="ICO",
+              sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+          )
+          '@ | python -
 
       - name: Build Windows installer
         run: pyinstaller --onefile --windowed --name CCBot-Windows-Installer --icon assets/ccbot.ico --add-data "assets/ccbot.png;assets" --add-data "assets/ccbot.ico;assets" ccbot_agent/windows_installer.py

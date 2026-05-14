@@ -157,7 +157,7 @@ def launch_gui():
     root = tk.Tk()
     root.title(APP_NAME)
     configure_window_identity(root)
-    root.geometry("700x690")
+    root.geometry("760x760")
     root.resizable(False, False)
 
     frame = ttk.Frame(root, padding=24)
@@ -259,6 +259,20 @@ def launch_gui():
     progress = ttk.Progressbar(frame, maximum=100, variable=progress_var)
     progress.pack(fill="x", pady=(0, 12))
 
+    actions = ttk.Frame(frame)
+    actions.pack(fill="x", pady=(0, 14))
+
+    install_button = ttk.Button(actions, text="Install and start CCBot", state="disabled")
+    install_button.pack(side="left")
+    ttk.Label(
+        actions,
+        text="The install button activates after the token is pasted and the terms are accepted.",
+        wraplength=500,
+    ).pack(
+        side="left",
+        padx=(12, 0),
+    )
+
     log_label = ttk.Label(frame, text="Installation log")
     log_label.pack(anchor="w")
     log_frame = ttk.Frame(frame)
@@ -282,12 +296,6 @@ def launch_gui():
     log_text.configure(state="disabled")
     log_text.pack(side="left", fill="both", expand=True)
     log_scrollbar.pack(side="right", fill="y")
-
-    actions = ttk.Frame(frame)
-    actions.pack(fill="x")
-
-    install_button = ttk.Button(actions, text="Install and start CCBot", state="disabled")
-    install_button.pack(anchor="w")
 
     def set_status(message):
         root.after(0, lambda: status_var.set(message))

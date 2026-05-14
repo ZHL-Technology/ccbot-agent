@@ -4,6 +4,15 @@ All notable changes to CCBot Agent are documented here.
 
 The project follows semantic versioning.
 
+## 0.1.4 - 2026-05-14
+
+### Changed
+
+- Rebuilt the Windows installer icon as a multi-size Windows ICO for better
+  File Explorer display.
+- Moved the Windows installer action button above the log area so it stays
+  visible after the token is pasted and the terms are accepted.
+
 ## 0.1.3 - 2026-05-14
 
 ### Changed
