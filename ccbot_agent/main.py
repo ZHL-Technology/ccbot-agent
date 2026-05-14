@@ -15,7 +15,7 @@ from pathlib import Path
 try:
     from ccbot_agent import __version__
 except ImportError:
-    __version__ = "0.1.5"
+    __version__ = "0.1.6"
 
 
 DEFAULT_CONFIG = Path("/etc/ccbot-agent/config.json")
@@ -77,7 +77,11 @@ def run_command(command, timeout=8):
 
 def post_json(url, payload, token=None, timeout=20):
     body = json.dumps(payload).encode("utf-8")
-    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": f"CCBot-Agent/{__version__} (+https://cybercareai.io)",
+    }
     if token:
         headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")
@@ -89,6 +93,12 @@ def post_json(url, payload, token=None, timeout=20):
             payload = json.loads(exc.read().decode("utf-8") or "{}")
         except json.JSONDecodeError:
             payload = {"error": str(exc)}
+        if payload.get("error_code") == 1010:
+            payload["error"] = (
+                "Cloudflare blocked this CCBot request before it reached CyberCare AI "
+                "(Error 1010: Access denied). The /api/agents/ endpoints need to allow "
+                "CCBot Agent traffic."
+            )
         return exc.code, payload
 
 

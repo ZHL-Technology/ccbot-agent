@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import traceback
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
@@ -119,6 +120,16 @@ def start_agent(executable):
         cwd=str(APP_DIR),
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
+
+
+def write_failure_log(error_text):
+    try:
+        APP_DIR.mkdir(parents=True, exist_ok=True)
+        log_path = APP_DIR / "install-error.log"
+        log_path.write_text(error_text, encoding="utf-8")
+        return log_path
+    except Exception:
+        return None
 
 
 def install(platform_url, enrollment_token, status_callback, progress_callback, log_callback):
@@ -264,6 +275,8 @@ def launch_gui():
 
     install_button = ttk.Button(actions, text="Install and start CCBot", state="disabled")
     install_button.pack(side="left")
+    copy_log_button = ttk.Button(actions, text="Copy log", command=lambda: copy_log())
+    copy_log_button.pack(side="left", padx=(8, 0))
     ttk.Label(
         actions,
         text="The install button activates after the token is pasted and the terms are accepted.",
@@ -292,10 +305,71 @@ def launch_gui():
         yscrollcommand=log_scrollbar.set,
     )
     log_scrollbar.config(command=log_text.yview)
-    log_text.insert("1.0", "Ready. Paste your token, review the terms, then start installation.\n")
+    initial_log = "Ready. Paste your token, review the terms, then start installation."
+    log_messages = [initial_log]
+    log_text.insert("1.0", f"{initial_log}\n")
     log_text.configure(state="disabled")
     log_text.pack(side="left", fill="both", expand=True)
     log_scrollbar.pack(side="right", fill="y")
+
+    def copy_text(text):
+        root.clipboard_clear()
+        root.clipboard_append(text)
+        root.update_idletasks()
+
+    def current_log_text():
+        return "\n".join(log_messages).strip()
+
+    def show_error_dialog(error_text):
+        dialog = tk.Toplevel(root)
+        dialog.title("CCBot installation failed")
+        configure_window_identity(dialog)
+        dialog.geometry("660x430")
+        dialog.resizable(False, False)
+        dialog.transient(root)
+        dialog.grab_set()
+
+        body = ttk.Frame(dialog, padding=20)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Installation failed", font=("Segoe UI", 14, "bold")).pack(anchor="w")
+        ttk.Label(
+            body,
+            text="CCBot could not finish installation. Copy the exact error below before closing this installer.",
+            wraplength=600,
+        ).pack(anchor="w", pady=(6, 12))
+
+        error_frame = ttk.Frame(body)
+        error_frame.pack(fill="both", expand=True)
+        error_scrollbar = ttk.Scrollbar(error_frame, orient="vertical")
+        error_box = tk.Text(
+            error_frame,
+            height=12,
+            wrap="word",
+            relief="solid",
+            borderwidth=1,
+            padx=8,
+            pady=8,
+            bg="#0f172a",
+            fg="#e5eefc",
+            insertbackground="#e5eefc",
+            yscrollcommand=error_scrollbar.set,
+        )
+        error_scrollbar.config(command=error_box.yview)
+        error_box.insert("1.0", error_text)
+        error_box.pack(side="left", fill="both", expand=True)
+        error_scrollbar.pack(side="right", fill="y")
+
+        buttons = ttk.Frame(body)
+        buttons.pack(fill="x", pady=(14, 0))
+        ttk.Button(buttons, text="Copy error", command=lambda: copy_text(error_text)).pack(side="left")
+        ttk.Button(buttons, text="Exit installer", command=root.destroy).pack(side="right")
+        dialog.protocol("WM_DELETE_WINDOW", root.destroy)
+        dialog.wait_window()
+
+    def copy_log():
+        text = current_log_text()
+        if text:
+            copy_text(text)
 
     def set_status(message):
         root.after(0, lambda: status_var.set(message))
@@ -304,6 +378,8 @@ def launch_gui():
         root.after(0, lambda: progress_var.set(value))
 
     def append_log(message):
+        log_messages.append(message)
+
         def update():
             log_text.configure(state="normal")
             log_text.insert("end", f"{message}\n")
@@ -338,10 +414,14 @@ def launch_gui():
             install(platform_var.get(), token_var.get(), set_status, set_progress, append_log)
         except BaseException as exc:
             message = str(exc) or exc.__class__.__name__
-            set_status("Installation failed. Please review the log below.")
+            error_text = f"{message}\n\nInstaller log:\n{current_log_text()}\n\nTraceback:\n{traceback.format_exc()}"
+            log_path = write_failure_log(error_text)
+            if log_path:
+                error_text = f"{error_text}\n\nSaved log file:\n{log_path}"
+            set_status("Installation failed. The installer will exit after you review the error.")
+            set_progress(0)
             append_log(f"ERROR: {message}")
-            root.after(0, lambda: set_inputs_state("normal"))
-            root.after(0, refresh_install_button)
+            root.after(0, lambda: show_error_dialog(error_text))
         else:
             root.after(0, lambda: install_button.configure(text="Finish", state="normal", command=finish))
 

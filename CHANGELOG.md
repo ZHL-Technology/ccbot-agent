@@ -4,6 +4,16 @@ All notable changes to CCBot Agent are documented here.
 
 The project follows semantic versioning.
 
+## 0.1.6 - 2026-05-14
+
+### Changed
+
+- Windows installer failures now open a copyable error dialog and exit through
+  an explicit Exit installer action.
+- Added a Copy log button to the Windows installer.
+- Agent API requests now send a CCBot User-Agent and return clearer guidance
+  when Cloudflare blocks enrollment with Error 1010.
+
 ## 0.1.5 - 2026-05-14
 
 ### Changed
