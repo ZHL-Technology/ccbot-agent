@@ -15,7 +15,7 @@ from pathlib import Path
 try:
     from ccbot_agent import __version__
 except ImportError:
-    __version__ = "0.1.0"
+    __version__ = "0.1.1"
 
 
 DEFAULT_CONFIG = Path("/etc/ccbot-agent/config.json")
@@ -97,6 +97,9 @@ def platform_url(config):
 
 
 def collect_checks():
+    if platform.system().lower() == "windows":
+        return collect_windows_checks()
+
     disk_rows = []
     for row in run_command("df -P -x tmpfs -x devtmpfs", timeout=10)["stdout"].splitlines()[1:]:
         parts = row.split()
@@ -137,6 +140,47 @@ def collect_checks():
         "listening_ports": run_command("ss -tulpen 2>/dev/null | head -n 80", timeout=10),
         "package_updates": collect_package_updates(),
         "certificates": collect_certificate_hints(),
+    }
+    checks["summary"] = summarize_checks(checks)
+    return checks
+
+
+def collect_windows_checks():
+    disk_rows = []
+    for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        root = f"{letter}:\\"
+        if not Path(root).exists():
+            continue
+        try:
+            usage = shutil.disk_usage(root)
+        except OSError:
+            continue
+        used_percent = round(((usage.total - usage.free) / usage.total) * 100) if usage.total else 0
+        disk_rows.append({"filesystem": root, "used_percent": f"{used_percent}%", "mount": root})
+
+    checks = {
+        "observed_at": utc_now(),
+        "hostname": socket.gethostname(),
+        "platform": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "python": platform.python_version(),
+        },
+        "load_average": [],
+        "disk": disk_rows,
+        "memory": run_command(
+            'powershell -NoProfile -Command "Get-CimInstance Win32_OperatingSystem | Select-Object TotalVisibleMemorySize,FreePhysicalMemory | ConvertTo-Json"',
+            timeout=12,
+        ),
+        "systemd_failed": {"command": "Windows service failure collection", "exit_code": 0, "stdout": "", "stderr": ""},
+        "listening_ports": run_command("netstat -ano | findstr LISTENING", timeout=12),
+        "package_updates": {
+            "command": "Windows Update",
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "Windows Update collection is not enabled in this preview.",
+        },
+        "certificates": [],
     }
     checks["summary"] = summarize_checks(checks)
     return checks
@@ -271,8 +315,8 @@ def run_loop(config_path):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="CCBot Linux Agent")
-    parser.add_argument("--version", action="version", version=f"CCBot Linux Agent {__version__}")
+    parser = argparse.ArgumentParser(description="CCBot Agent")
+    parser.add_argument("--version", action="version", version=f"CCBot Agent {__version__}")
     parser.add_argument("command", choices=["collect", "enroll", "run"])
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     args = parser.parse_args(argv)

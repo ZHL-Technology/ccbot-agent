@@ -1,8 +1,21 @@
 # Changelog
 
-All notable changes to CCBot Linux Agent are documented here.
+All notable changes to CCBot Agent are documented here.
 
 The project follows semantic versioning.
+
+## 0.1.1 - 2026-05-14
+
+### Added
+
+- Windows installer preview with a small token-entry setup window.
+- GitHub Actions build job for `CCBot-Windows-Installer.exe`.
+- Basic Windows heartbeat support for disk usage and listening-port evidence.
+
+### Changed
+
+- Project metadata now describes the broader CCBot Agent package instead of
+  only the Linux agent.
 
 ## 0.1.0 - 2026-05-12
 

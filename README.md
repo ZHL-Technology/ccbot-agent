@@ -1,11 +1,10 @@
-# CCBot Linux Agent
+# CCBot Agent
 
-CCBot Linux Agent is the installable Linux monitoring agent for CyberCare AI.
-It runs on customer-owned Linux servers, collects operational and security
-hygiene signals, and reports them to the CyberCare AI platform for 24/7
-monitoring, alerting, and audit-ready reporting.
+CCBot Agent is the installable monitoring agent for CyberCare AI. The Linux
+agent runs as a managed service today, and the Windows installer preview gives
+desktop and Windows Server users a simple token-based setup path.
 
-Current version: `0.1.0`
+Current version: `0.1.1`
 
 Status: preview foundation. The agent is ready for controlled testing and will
 continue to evolve with signed releases, stronger policy controls, and deeper
@@ -30,9 +29,9 @@ servers.
 Activation is private. A downloaded copy cannot enroll, monitor, or submit
 reports unless the user has:
 
-- An active CyberCare AI plan that includes CCBot Linux monitoring.
+- An active CyberCare AI plan that includes CCBot Agent monitoring.
 - A one-time enrollment token generated inside the CyberCare AI dashboard.
-- Network access from the Linux server to the CyberCare AI platform.
+- Network access from the monitored device to the CyberCare AI platform.
 
 The enrollment token is exchanged for an agent token during setup and then
 removed from the local config file.
@@ -55,7 +54,7 @@ command output can still include hostnames, local paths, service names, package
 names, usernames, and process metadata, so treat reports as operationally
 sensitive.
 
-## Supported Linux Families
+## Supported Platforms
 
 The installer can prepare prerequisites on common distributions:
 
@@ -68,6 +67,10 @@ The installer can prepare prerequisites on common distributions:
 The runtime only requires Python 3, `curl`, certificates, OpenSSL, `systemd`,
 and `ss` from the iproute package family.
 
+Windows support is available as an installer preview. The Windows executable
+opens a small setup window, accepts the one-time install token, enrolls the
+device, and starts CCBot in the background for the signed-in user.
+
 ## Install
 
 Create a one-time install token in CyberCare AI first. Then run the commands
@@ -78,7 +81,7 @@ Use a pinned release tag for repeatable installs:
 ```bash
 export CCBOT_PLATFORM_URL="https://cybercareai.io"
 export CCBOT_ENROLLMENT_TOKEN="PASTE_ONE_TIME_TOKEN_HERE"
-export CCBOT_AGENT_VERSION="v0.1.0"
+export CCBOT_AGENT_VERSION="v0.1.1"
 
 curl -fsSL "https://raw.githubusercontent.com/ZHL-Technology/ccbot-agent/${CCBOT_AGENT_VERSION}/install.sh" -o /tmp/ccbot-agent-install.sh
 sudo CCBOT_PLATFORM_URL="$CCBOT_PLATFORM_URL" CCBOT_ENROLLMENT_TOKEN="$CCBOT_ENROLLMENT_TOKEN" bash /tmp/ccbot-agent-install.sh
@@ -86,6 +89,30 @@ sudo CCBOT_PLATFORM_URL="$CCBOT_PLATFORM_URL" CCBOT_ENROLLMENT_TOKEN="$CCBOT_ENR
 
 Do not paste enrollment tokens into tickets, chat logs, screenshots, or shell
 history that other people can read.
+
+## Windows Installer Preview
+
+The Windows installer is built by GitHub Actions as:
+
+```text
+CCBot-Windows-Installer.exe
+```
+
+Download path for tagged releases:
+
+```text
+https://github.com/ZHL-Technology/ccbot-agent/releases/latest/download/CCBot-Windows-Installer.exe
+```
+
+The installer asks for:
+
+- CyberCare AI platform URL, normally `https://cybercareai.io`
+- One-time install token from the CyberCare AI CCBot page
+
+After enrollment it creates a Windows scheduled task named `CCBot Agent` and
+starts the background monitor. This preview is intended to remove terminal work
+from the normal Windows user path; deeper Windows Service packaging and code
+signing will come later.
 
 ## Verify Installation
 
@@ -168,7 +195,7 @@ python3 -m ccbot_agent.main --version
 For a controlled upgrade, choose the release tag explicitly:
 
 ```bash
-export CCBOT_AGENT_VERSION="v0.1.0"
+export CCBOT_AGENT_VERSION="v0.1.1"
 curl -fsSL "https://raw.githubusercontent.com/ZHL-Technology/ccbot-agent/${CCBOT_AGENT_VERSION}/install.sh" -o /tmp/ccbot-agent-install.sh
 sudo CCBOT_PLATFORM_URL="https://cybercareai.io" CCBOT_ENROLLMENT_TOKEN="PASTE_ONE_TIME_TOKEN_HERE" bash /tmp/ccbot-agent-install.sh
 ```
@@ -192,7 +219,7 @@ not remain in the dashboard.
 
 ## Versioning
 
-CCBot Linux Agent uses semantic versioning:
+CCBot Agent uses semantic versioning:
 
 ```text
 MAJOR.MINOR.PATCH
@@ -209,7 +236,7 @@ Version data is kept in:
 - `pyproject.toml`
 - `ccbot_agent/__init__.py`
 - `install.sh`
-- Git tags such as `v0.1.0`
+- Git tags such as `v0.1.1`
 
 To prepare a future version:
 
@@ -221,7 +248,7 @@ Then update `CHANGELOG.md`, commit the change, and create a signed or annotated
 release tag:
 
 ```bash
-git tag -a v0.1.1 -m "CCBot Linux Agent v0.1.1"
+git tag -a v0.1.1 -m "CCBot Agent v0.1.1"
 git push origin main --tags
 ```
 

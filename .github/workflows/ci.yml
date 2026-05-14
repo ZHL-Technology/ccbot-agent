@@ -30,3 +30,34 @@ jobs:
 
       - name: Compile version helper
         run: python -m py_compile scripts/bump_version.py
+
+  windows-installer:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: python -m pip install pyinstaller
+
+      - name: Build Windows installer
+        run: pyinstaller --onefile --windowed --name CCBot-Windows-Installer ccbot_agent/windows_installer.py
+
+      - name: Upload Windows installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CCBot-Windows-Installer
+          path: dist/CCBot-Windows-Installer.exe
+
+      - name: Attach Windows installer to tagged release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/CCBot-Windows-Installer.exe
