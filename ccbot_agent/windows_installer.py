@@ -33,6 +33,36 @@ By continuing, you confirm that:
 Only continue if you understand and agree to these conditions."""
 
 
+def resource_path(relative_path):
+    base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
+    return base_path / relative_path
+
+
+def configure_window_identity(root):
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("CyberCareAI.CCBotAgent")
+        except Exception:
+            pass
+
+    icon_path = resource_path("assets/ccbot.ico")
+    image_path = resource_path("assets/ccbot.png")
+    try:
+        if icon_path.exists():
+            root.iconbitmap(default=str(icon_path))
+    except Exception:
+        pass
+    try:
+        if image_path.exists():
+            icon_image = tk.PhotoImage(file=str(image_path))
+            root.iconphoto(True, icon_image)
+            root._ccbot_icon_image = icon_image
+    except Exception:
+        pass
+
+
 def write_config(platform_url, enrollment_token):
     APP_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(
@@ -126,6 +156,7 @@ def install(platform_url, enrollment_token, status_callback, progress_callback, 
 def launch_gui():
     root = tk.Tk()
     root.title(APP_NAME)
+    configure_window_identity(root)
     root.geometry("700x690")
     root.resizable(False, False)
 
@@ -141,11 +172,56 @@ def launch_gui():
 
     ttk.Label(frame, text="Platform URL").pack(anchor="w")
     platform_var = tk.StringVar(value=DEFAULT_PLATFORM_URL)
-    ttk.Entry(frame, textvariable=platform_var).pack(fill="x", pady=(4, 14))
+    platform_entry = ttk.Entry(frame, textvariable=platform_var)
+    platform_entry.pack(fill="x", pady=(4, 14))
 
     ttk.Label(frame, text="Install token").pack(anchor="w")
     token_var = tk.StringVar()
-    ttk.Entry(frame, textvariable=token_var, show="*").pack(fill="x", pady=(4, 14))
+    token_row = ttk.Frame(frame)
+    token_row.pack(fill="x", pady=(4, 14))
+    token_entry = ttk.Entry(token_row, textvariable=token_var, show="*")
+    token_entry.pack(side="left", fill="x", expand=True)
+    paste_button = ttk.Button(token_row, text="Paste", width=10)
+    paste_button.pack(side="left", padx=(8, 0))
+
+    def paste_from_clipboard(entry):
+        try:
+            entry.delete(0, "end")
+            entry.insert(0, root.clipboard_get().strip())
+        except tk.TclError:
+            pass
+        refresh_install_button()
+        return "break"
+
+    def attach_entry_menu(entry):
+        def copy_selection():
+            try:
+                selected_text = entry.selection_get()
+            except tk.TclError:
+                return
+            root.clipboard_clear()
+            root.clipboard_append(selected_text)
+
+        menu = tk.Menu(root, tearoff=0)
+        menu.add_command(label="Paste", command=lambda: paste_from_clipboard(entry))
+        menu.add_command(label="Copy", command=copy_selection)
+        menu.add_command(label="Select all", command=lambda: (entry.select_range(0, "end"), entry.icursor("end")))
+
+        def show_menu(event):
+            try:
+                menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                menu.grab_release()
+            return "break"
+
+        entry.bind("<Button-3>", show_menu)
+        entry.bind("<Control-v>", lambda _event: paste_from_clipboard(entry))
+        entry.bind("<Control-V>", lambda _event: paste_from_clipboard(entry))
+        entry.bind("<Shift-Insert>", lambda _event: paste_from_clipboard(entry))
+
+    attach_entry_menu(platform_entry)
+    attach_entry_menu(token_entry)
+    paste_button.configure(command=lambda: paste_from_clipboard(token_entry))
 
     terms_box = ttk.LabelFrame(frame, text="Terms and responsibility")
     terms_box.pack(fill="x", pady=(0, 12))
@@ -239,9 +315,9 @@ def launch_gui():
 
     def set_inputs_state(state):
         terms_check.configure(state=state)
-        for child in frame.winfo_children():
-            if isinstance(child, ttk.Entry):
-                child.configure(state=state)
+        paste_button.configure(state=state)
+        platform_entry.configure(state=state)
+        token_entry.configure(state=state)
 
     def finish():
         root.destroy()

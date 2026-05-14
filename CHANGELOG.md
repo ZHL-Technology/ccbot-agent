@@ -4,6 +4,17 @@ All notable changes to CCBot Agent are documented here.
 
 The project follows semantic versioning.
 
+## 0.1.3 - 2026-05-14
+
+### Changed
+
+- Added the CCBot brand icon to the Windows installer executable, title bar,
+  and taskbar identity.
+- Added an explicit Paste button and right-click paste menu for the install
+  token field.
+- Added an optional GitHub Actions code-signing step for tagged Windows
+  releases when a production signing certificate is configured.
+
 ## 0.1.2 - 2026-05-14
 
 ### Changed

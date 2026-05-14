@@ -4,7 +4,7 @@ CCBot Agent is the installable monitoring agent for CyberCare AI. The Linux
 agent runs as a managed service today, and the Windows installer preview gives
 desktop and Windows Server users a simple token-based setup path.
 
-Current version: `0.1.2`
+Current version: `0.1.3`
 
 Status: preview foundation. The agent is ready for controlled testing and will
 continue to evolve with signed releases, stronger policy controls, and deeper
@@ -82,7 +82,7 @@ Use a pinned release tag for repeatable installs:
 ```bash
 export CCBOT_PLATFORM_URL="https://cybercareai.io"
 export CCBOT_ENROLLMENT_TOKEN="PASTE_ONE_TIME_TOKEN_HERE"
-export CCBOT_AGENT_VERSION="v0.1.2"
+export CCBOT_AGENT_VERSION="v0.1.3"
 
 curl -fsSL "https://raw.githubusercontent.com/ZHL-Technology/ccbot-agent/${CCBOT_AGENT_VERSION}/install.sh" -o /tmp/ccbot-agent-install.sh
 sudo CCBOT_PLATFORM_URL="$CCBOT_PLATFORM_URL" CCBOT_ENROLLMENT_TOKEN="$CCBOT_ENROLLMENT_TOKEN" bash /tmp/ccbot-agent-install.sh
@@ -111,13 +111,16 @@ The installer asks for:
 - One-time install token from the CyberCare AI CCBot page
 
 After enrollment it creates a Windows scheduled task named `CCBot Agent` and
-starts the background monitor. The preview installer shows a progress bar and
-installation log so enrollment or startup errors are visible to the user.
+starts the background monitor. The preview installer shows a progress bar,
+installation log, CCBot branding, and a Paste button for the token field so
+enrollment or startup errors are visible to the user.
 
 This preview is intended to remove terminal work from the normal Windows user
 path. Windows SmartScreen may warn that the first preview builds are
-unrecognized until a production code-signing certificate is added; only run
-installers downloaded from the official CyberCare AI GitHub release.
+unrecognized until a production code-signing certificate is added and the app
+builds reputation with Microsoft. The release workflow supports optional
+certificate signing through GitHub secrets; only run installers downloaded from
+the official CyberCare AI GitHub release.
 
 ## Verify Installation
 
@@ -200,7 +203,7 @@ python3 -m ccbot_agent.main --version
 For a controlled upgrade, choose the release tag explicitly:
 
 ```bash
-export CCBOT_AGENT_VERSION="v0.1.2"
+export CCBOT_AGENT_VERSION="v0.1.3"
 curl -fsSL "https://raw.githubusercontent.com/ZHL-Technology/ccbot-agent/${CCBOT_AGENT_VERSION}/install.sh" -o /tmp/ccbot-agent-install.sh
 sudo CCBOT_PLATFORM_URL="https://cybercareai.io" CCBOT_ENROLLMENT_TOKEN="PASTE_ONE_TIME_TOKEN_HERE" bash /tmp/ccbot-agent-install.sh
 ```
@@ -241,19 +244,19 @@ Version data is kept in:
 - `pyproject.toml`
 - `ccbot_agent/__init__.py`
 - `install.sh`
-- Git tags such as `v0.1.2`
+- Git tags such as `v0.1.3`
 
 To prepare a future version:
 
 ```bash
-python3 scripts/bump_version.py 0.1.2
+python3 scripts/bump_version.py 0.1.3
 ```
 
 Then update `CHANGELOG.md`, commit the change, and create a signed or annotated
 release tag:
 
 ```bash
-git tag -a v0.1.2 -m "CCBot Agent v0.1.2"
+git tag -a v0.1.3 -m "CCBot Agent v0.1.3"
 git push origin main --tags
 ```
 
