@@ -4,6 +4,14 @@ All notable changes to CCBot Agent are documented here.
 
 The project follows semantic versioning.
 
+## 0.1.5 - 2026-05-14
+
+### Changed
+
+- Published a versioned Windows installer filename alongside the stable
+  installer filename to avoid Windows Explorer showing a cached icon from an
+  older download.
+
 ## 0.1.4 - 2026-05-14
 
 ### Changed
