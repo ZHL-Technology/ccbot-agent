@@ -15,7 +15,7 @@ from pathlib import Path
 try:
     from ccbot_agent import __version__
 except ImportError:
-    __version__ = "0.1.6"
+    __version__ = "0.1.7"
 
 
 DEFAULT_CONFIG = Path("/etc/ccbot-agent/config.json")
@@ -251,6 +251,14 @@ def enroll(config_path):
         },
     )
     if status not in (200, 201) or not payload.get("ok"):
+        code = payload.get("code")
+        if code in {"invalid_token", "token_already_used", "token_revoked", "token_expired"}:
+            detail = payload.get("error") or "The enrollment token could not be accepted."
+            raise SystemExit(
+                f"{detail}\n\n"
+                "Open CyberCare AI > CCBot install, create a new install token, copy it once, "
+                "and paste that fresh token into this installer."
+            )
         raise SystemExit(f"Enrollment failed: {payload}")
     state = read_json(config.get("state_path", str(DEFAULT_STATE)), {})
     state.update(

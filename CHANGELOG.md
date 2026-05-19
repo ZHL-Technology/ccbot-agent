@@ -4,6 +4,13 @@ All notable changes to CCBot Agent are documented here.
 
 The project follows semantic versioning.
 
+## 0.1.7 - 2026-05-19
+
+### Changed
+
+- Enrollment token failures now explain whether the token should be replaced
+  instead of showing only the raw API payload.
+
 ## 0.1.6 - 2026-05-14
 
 ### Changed
