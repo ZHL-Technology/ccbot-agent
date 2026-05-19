@@ -4,6 +4,13 @@ All notable changes to CCBot Agent are documented here.
 
 The project follows semantic versioning.
 
+## 0.1.8 - 2026-05-19
+
+### Changed
+
+- Windows installer now falls back to current-user Startup registration when
+  Windows blocks scheduled task creation with access denied.
+
 ## 0.1.7 - 2026-05-19
 
 ### Changed

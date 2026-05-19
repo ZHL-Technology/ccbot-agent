@@ -20,6 +20,7 @@ APP_DIR = PROGRAM_DATA / "CCBotAgent"
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
 TASK_NAME = "CCBot Agent"
+RUN_KEY_PATH = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
 
 TERMS_TEXT = """CCBot Agent will enroll this Windows device with CyberCare AI and start continuous monitoring for security hygiene and system health signals.
 
@@ -90,8 +91,11 @@ def current_executable_target():
     return Path(sys.executable)
 
 
-def create_startup_task(executable):
-    command = f'"{executable}" --agent-run --config "{CONFIG_PATH}"'
+def quoted_agent_command(executable):
+    return f'"{executable}" --agent-run --config "{CONFIG_PATH}"'
+
+
+def create_scheduled_task(command):
     completed = subprocess.run(
         [
             "schtasks",
@@ -109,9 +113,51 @@ def create_startup_task(executable):
         stderr=subprocess.PIPE,
         text=True,
     )
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip() or "Windows did not return a detailed error."
-        raise RuntimeError(f"Could not create the Windows startup task. {detail}")
+    if completed.returncode == 0:
+        return "Windows scheduled task"
+    detail = completed.stderr.strip() or completed.stdout.strip() or "Windows did not return a detailed error."
+    raise RuntimeError(detail)
+
+
+def create_current_user_run_key(command):
+    completed = subprocess.run(
+        [
+            "reg",
+            "add",
+            RUN_KEY_PATH,
+            "/v",
+            TASK_NAME,
+            "/t",
+            "REG_SZ",
+            "/d",
+            command,
+            "/f",
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if completed.returncode == 0:
+        return "current-user Windows startup"
+    detail = completed.stderr.strip() or completed.stdout.strip() or "Windows did not return a detailed error."
+    raise RuntimeError(detail)
+
+
+def create_startup_entry(executable):
+    command = quoted_agent_command(executable)
+    try:
+        return create_scheduled_task(command)
+    except RuntimeError as scheduled_task_error:
+        try:
+            method = create_current_user_run_key(command)
+        except RuntimeError as run_key_error:
+            raise RuntimeError(
+                "Could not register CCBot to start with Windows. "
+                f"Scheduled task error: {scheduled_task_error}. "
+                f"Current-user startup error: {run_key_error}."
+            ) from run_key_error
+        return f"{method} (scheduled task was blocked: {scheduled_task_error})"
 
 
 def start_agent(executable):
@@ -155,9 +201,10 @@ def install(platform_url, enrollment_token, status_callback, progress_callback, 
         message = str(exc) or exc.__class__.__name__
         raise RuntimeError(message) from exc
 
-    step(65, "Preparing startup task...")
+    step(65, "Preparing Windows startup...")
     executable = current_executable_target()
-    create_startup_task(executable)
+    startup_method = create_startup_entry(executable)
+    log_callback(f"Startup registered with {startup_method}.")
 
     step(82, "Starting CCBot in the background...")
     start_agent(executable)
