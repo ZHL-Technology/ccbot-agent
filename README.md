@@ -47,6 +47,8 @@ The preview agent focuses on system health and security hygiene signals:
 - Listening TCP/UDP ports from `ss`.
 - Available package update hints for common package managers.
 - Certificate expiry hints under common Let's Encrypt paths.
+- GPU diagnostics when available, including NVIDIA `nvidia-smi` health,
+  driver mismatch errors, and basic display-controller inventory.
 
 The agent does not scan application databases, does not read arbitrary user
 files, and does not execute cleanup actions in this preview version. Collected

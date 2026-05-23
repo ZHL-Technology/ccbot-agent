@@ -4,6 +4,14 @@ All notable changes to CCBot Agent are documented here.
 
 The project follows semantic versioning.
 
+## Unreleased
+
+### Added
+
+- Added GPU diagnostics to agent evidence, including NVIDIA `nvidia-smi`
+  status, driver mismatch errors, basic PCI display-device hints on Linux, and
+  Windows video-controller inventory.
+
 ## 0.1.8 - 2026-05-19
 
 ### Changed

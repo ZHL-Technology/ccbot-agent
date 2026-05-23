@@ -150,6 +150,7 @@ def collect_checks():
         "listening_ports": run_command("ss -tulpen 2>/dev/null | head -n 80", timeout=10),
         "package_updates": collect_package_updates(),
         "certificates": collect_certificate_hints(),
+        "gpu": collect_gpu_checks(),
     }
     checks["summary"] = summarize_checks(checks)
     return checks
@@ -191,9 +192,95 @@ def collect_windows_checks():
             "stderr": "Windows Update collection is not enabled in this preview.",
         },
         "certificates": [],
+        "gpu": collect_windows_gpu_checks(),
     }
     checks["summary"] = summarize_checks(checks)
     return checks
+
+
+def parse_nvidia_smi_csv(output):
+    devices = []
+    for row in str(output or "").splitlines():
+        parts = [part.strip() for part in row.split(",")]
+        if len(parts) < 6:
+            continue
+        device = {
+            "name": parts[0],
+            "driver_version": parts[1],
+            "utilization_gpu": parts[2],
+            "memory_used_mib": parts[3],
+            "memory_total_mib": parts[4],
+            "temperature_c": parts[5],
+        }
+        devices.append(device)
+    return devices
+
+
+def collect_gpu_checks():
+    lspci = (
+        run_command("lspci | grep -Ei 'vga|3d|display|nvidia|amd/ati' | head -n 20", timeout=6)
+        if shutil.which("lspci")
+        else {"command": "lspci", "exit_code": 127, "stdout": "", "stderr": "lspci is not installed."}
+    )
+    has_nvidia_hardware = "nvidia" in f"{lspci.get('stdout', '')} {lspci.get('stderr', '')}".lower()
+    nvidia_smi_path = shutil.which("nvidia-smi")
+    nvidia_smi = None
+    devices = []
+    status = "not_detected"
+    diagnostic = ""
+
+    if nvidia_smi_path:
+        nvidia_smi = run_command(
+            "nvidia-smi --query-gpu=name,driver_version,utilization.gpu,memory.used,memory.total,temperature.gpu "
+            "--format=csv,noheader,nounits",
+            timeout=10,
+        )
+        devices = parse_nvidia_smi_csv(nvidia_smi.get("stdout", ""))
+        if nvidia_smi.get("exit_code") == 0:
+            status = "ok" if devices else "no_nvidia_gpu_reported"
+        else:
+            status = "driver_error"
+            diagnostic = (nvidia_smi.get("stderr") or nvidia_smi.get("stdout") or "nvidia-smi failed.").strip()
+    elif has_nvidia_hardware:
+        status = "driver_unavailable"
+        diagnostic = "NVIDIA hardware was detected, but nvidia-smi is not available in PATH."
+    elif lspci.get("stdout"):
+        status = "gpu_detected"
+
+    return {
+        "status": status,
+        "devices": devices,
+        "diagnostic": diagnostic[-2000:],
+        "nvidia_smi": nvidia_smi,
+        "pci_display": lspci,
+    }
+
+
+def collect_windows_gpu_checks():
+    video_controllers = run_command(
+        'powershell -NoProfile -Command "Get-CimInstance Win32_VideoController | '
+        'Select-Object Name,DriverVersion,AdapterRAM,Status | ConvertTo-Json -Compress"',
+        timeout=12,
+    )
+    nvidia_smi = run_command(
+        'powershell -NoProfile -Command "if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) { '
+        'nvidia-smi --query-gpu=name,driver_version,utilization.gpu,memory.used,memory.total,temperature.gpu '
+        '--format=csv,noheader,nounits }"',
+        timeout=12,
+    )
+    devices = parse_nvidia_smi_csv(nvidia_smi.get("stdout", ""))
+    status = "ok" if devices else ("collected" if video_controllers.get("stdout") else "not_detected")
+    diagnostic = ""
+    if nvidia_smi.get("exit_code") not in (0, None) and nvidia_smi.get("stderr"):
+        status = "driver_error"
+        diagnostic = nvidia_smi.get("stderr", "").strip()
+    return {
+        "status": status,
+        "devices": devices,
+        "diagnostic": diagnostic[-2000:],
+        "nvidia_smi": nvidia_smi,
+        "video_controllers": video_controllers,
+    }
 
 
 def collect_package_updates():
@@ -233,6 +320,20 @@ def summarize_checks(checks):
     failed_output = checks.get("systemd_failed", {}).get("stdout", "")
     if failed_output and "0 loaded units listed" not in failed_output:
         warnings.append("Failed systemd services were reported.")
+    gpu = checks.get("gpu") or {}
+    if gpu.get("status") in {"driver_error", "driver_unavailable"}:
+        detail = gpu.get("diagnostic") or gpu.get("status")
+        warnings.append(f"GPU driver diagnostics need review: {detail[:180]}.")
+    for device in gpu.get("devices") or []:
+        try:
+            utilization = int(float(str(device.get("utilization_gpu", "0")).rstrip("%")))
+            temperature = int(float(str(device.get("temperature_c", "0")).rstrip("C")))
+        except (TypeError, ValueError):
+            continue
+        if utilization >= 92 or temperature >= 82:
+            warnings.append(
+                f"GPU {device.get('name', 'device')} is at {utilization}% utilization and {temperature}C."
+            )
     return "No urgent issue detected." if not warnings else " ".join(warnings)
 
 
