@@ -49,12 +49,39 @@ The preview agent focuses on system health and security hygiene signals:
 - Certificate expiry hints under common Let's Encrypt paths.
 - GPU diagnostics when available, including NVIDIA `nvidia-smi` health,
   driver mismatch errors, and basic display-controller inventory.
+- Firewall posture, SSH/authentication policy, privileged local accounts,
+  scheduled jobs, container runtime exposure, recent high-severity logs,
+  time synchronization, backup tooling hints, kernel network policy, and
+  endpoint protection signals when the operating system exposes them.
+- A versioned `audit_checklist` that marks every report area as checked,
+  needing review, or not collected, so each report carries its own coverage
+  trail and limitation note.
 
 The agent does not scan application databases, does not read arbitrary user
 files, and does not execute cleanup actions in this preview version. Collected
 command output can still include hostnames, local paths, service names, package
 names, usernames, and process metadata, so treat reports as operationally
 sensitive.
+
+## Audit Checklist Philosophy
+
+CCBot reports are designed to be clear and defensible. The report should not
+claim impossible certainty. Instead, every report includes a checklist that
+records what was collected, what needs review, and what could not be collected
+because of operating-system support, permissions, missing tools, or plan
+configuration.
+
+This gives administrators and CyberCare AI operators a stable audit trail for:
+
+- Identity and collection time.
+- Resource posture.
+- Listening services.
+- Service health.
+- Patch and certificate posture.
+- GPU and accelerator health.
+- Firewall, authentication, privileged account, and scheduled-work posture.
+- Containers, security logs, time sync, backup hints, kernel policy, and
+  endpoint protection signals.
 
 ## Supported Platforms
 

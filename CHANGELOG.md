@@ -11,6 +11,10 @@ The project follows semantic versioning.
 - Added GPU diagnostics to agent evidence, including NVIDIA `nvidia-smi`
   status, driver mismatch errors, basic PCI display-device hints on Linux, and
   Windows video-controller inventory.
+- Added a versioned audit checklist to every agent report, with coverage
+  status for identity, resources, ports, services, updates, certificates, GPU,
+  firewall, authentication, privileged accounts, scheduled work, containers,
+  logs, time sync, backups, kernel network policy, and endpoint protection.
 
 ## 0.1.8 - 2026-05-19
 

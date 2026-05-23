@@ -20,6 +20,27 @@ except ImportError:
 
 DEFAULT_CONFIG = Path("/etc/ccbot-agent/config.json")
 DEFAULT_STATE = Path("/var/lib/ccbot-agent/state.json")
+AUDIT_CHECKLIST_VERSION = "2026.05.23"
+
+AUDIT_CHECKLIST_ITEMS = (
+    ("device_identity", "Device identity", ("observed_at", "hostname", "platform")),
+    ("resource_posture", "CPU, load, memory, and storage posture", ("load_average", "memory", "disk")),
+    ("listening_services", "Listening services and exposed ports", ("listening_ports",)),
+    ("service_health", "Failed or unhealthy services", ("systemd_failed", "windows_services")),
+    ("patch_posture", "Operating system and package update hints", ("package_updates",)),
+    ("certificate_posture", "Certificate inventory and expiry hints", ("certificates",)),
+    ("gpu_posture", "GPU and accelerator driver health", ("gpu",)),
+    ("firewall_posture", "Host firewall posture", ("firewall",)),
+    ("authentication_posture", "Authentication and remote access policy", ("auth_policy",)),
+    ("privileged_accounts", "Privileged local accounts and admin groups", ("local_accounts",)),
+    ("scheduled_work", "Scheduled jobs, timers, and automation", ("scheduled_tasks",)),
+    ("container_runtime", "Container runtime exposure", ("containers",)),
+    ("security_logs", "Recent high-severity system/security logs", ("security_logs",)),
+    ("time_sync", "Clock and time synchronization", ("time_sync",)),
+    ("backup_signals", "Backup tooling and scheduling signals", ("backup_hints",)),
+    ("kernel_network_policy", "Kernel and network hardening policy", ("kernel_network_policy",)),
+    ("endpoint_protection", "Endpoint protection and audit service signals", ("endpoint_protection",)),
+)
 
 
 def utc_now():
@@ -73,6 +94,71 @@ def run_command(command, timeout=8):
         }
     except Exception as exc:
         return {"command": command, "exit_code": -1, "stdout": "", "stderr": str(exc)}
+
+
+def command_available(name):
+    return shutil.which(name) is not None
+
+
+def checklist_evidence_status(checks, keys):
+    present = []
+    review = []
+    unavailable = []
+    for key in keys:
+        value = checks.get(key)
+        if value in (None, "", [], {}):
+            unavailable.append(key)
+            continue
+        present.append(key)
+        if isinstance(value, dict):
+            status = str(value.get("status") or "").lower()
+            stderr = str(value.get("stderr") or "")
+            exit_code = value.get("exit_code")
+            if status in {"driver_error", "driver_unavailable", "not_supported", "limited", "error"}:
+                review.append(key)
+            elif exit_code not in (None, 0) and stderr:
+                review.append(key)
+        elif key == "certificates" and isinstance(value, list):
+            for cert in value:
+                if isinstance(cert, dict) and cert.get("error"):
+                    review.append(key)
+                    break
+    if present and review:
+        status = "needs_review"
+    elif present:
+        status = "checked"
+    else:
+        status = "not_collected"
+    return status, present, review, unavailable
+
+
+def build_audit_checklist(checks):
+    items = []
+    counts = {"checked": 0, "needs_review": 0, "not_collected": 0}
+    for item_id, title, evidence_keys in AUDIT_CHECKLIST_ITEMS:
+        status, present, review, unavailable = checklist_evidence_status(checks, evidence_keys)
+        counts[status] = counts.get(status, 0) + 1
+        items.append(
+            {
+                "id": item_id,
+                "title": title,
+                "status": status,
+                "evidence": present,
+                "review_evidence": review,
+                "missing_evidence": unavailable,
+            }
+        )
+    return {
+        "version": AUDIT_CHECKLIST_VERSION,
+        "generated_at": utc_now(),
+        "counts": counts,
+        "items": items,
+        "legal_note": (
+            "This checklist is an audit trail of collected signals, not an absolute guarantee. "
+            "Items marked not_collected or needs_review identify areas that require access, configuration, "
+            "a supported operating system feature, or human review."
+        ),
+    }
 
 
 def post_json(url, payload, token=None, timeout=20):
@@ -151,7 +237,18 @@ def collect_checks():
         "package_updates": collect_package_updates(),
         "certificates": collect_certificate_hints(),
         "gpu": collect_gpu_checks(),
+        "firewall": collect_firewall_posture(),
+        "auth_policy": collect_auth_policy(),
+        "local_accounts": collect_local_accounts(),
+        "scheduled_tasks": collect_scheduled_tasks(),
+        "containers": collect_container_posture(),
+        "security_logs": collect_security_logs(),
+        "time_sync": collect_time_sync(),
+        "backup_hints": collect_backup_hints(),
+        "kernel_network_policy": collect_kernel_network_policy(),
+        "endpoint_protection": collect_endpoint_protection(),
     }
+    checks["audit_checklist"] = build_audit_checklist(checks)
     checks["summary"] = summarize_checks(checks)
     return checks
 
@@ -193,7 +290,23 @@ def collect_windows_checks():
         },
         "certificates": [],
         "gpu": collect_windows_gpu_checks(),
+        "windows_services": collect_windows_service_health(),
+        "firewall": collect_windows_firewall_posture(),
+        "auth_policy": collect_windows_auth_policy(),
+        "local_accounts": collect_windows_local_accounts(),
+        "scheduled_tasks": collect_windows_scheduled_tasks(),
+        "containers": collect_windows_container_posture(),
+        "security_logs": collect_windows_security_logs(),
+        "time_sync": collect_windows_time_sync(),
+        "backup_hints": collect_windows_backup_hints(),
+        "kernel_network_policy": {
+            "status": "not_supported",
+            "stdout": "",
+            "stderr": "Kernel sysctl collection is Linux-specific.",
+        },
+        "endpoint_protection": collect_windows_endpoint_protection(),
     }
+    checks["audit_checklist"] = build_audit_checklist(checks)
     checks["summary"] = summarize_checks(checks)
     return checks
 
@@ -306,6 +419,174 @@ def collect_certificate_hints():
         result = run_command(f"openssl x509 -enddate -noout -in {cert}", timeout=6)
         certs.append({"path": str(cert), "enddate": result["stdout"].strip(), "error": result["stderr"].strip()})
     return certs[:50]
+
+
+def collect_firewall_posture():
+    commands = []
+    if command_available("ufw"):
+        commands.append("ufw status verbose")
+    if command_available("firewall-cmd"):
+        commands.append("firewall-cmd --state; firewall-cmd --list-all")
+    if command_available("nft"):
+        commands.append("nft list ruleset | head -n 140")
+    if command_available("iptables"):
+        commands.append("iptables -S | head -n 140")
+    if not commands:
+        return {"status": "not_collected", "stdout": "", "stderr": "No supported firewall tool found."}
+    return run_command(" ; ".join(f"( {command} )" for command in commands), timeout=15)
+
+
+def collect_auth_policy():
+    command = (
+        "if command -v sshd >/dev/null 2>&1; then "
+        "sshd -T 2>/dev/null | grep -Ei "
+        "'^(permitrootlogin|passwordauthentication|pubkeyauthentication|kbdinteractiveauthentication|maxauthtries|permitemptypasswords|allowusers|allowgroups)' ; "
+        "else "
+        "grep -RhsEi '^\\s*(PermitRootLogin|PasswordAuthentication|PubkeyAuthentication|KbdInteractiveAuthentication|MaxAuthTries|PermitEmptyPasswords|AllowUsers|AllowGroups)' "
+        "/etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null ; "
+        "fi"
+    )
+    return run_command(command, timeout=8)
+
+
+def collect_local_accounts():
+    command = (
+        "getent passwd | awk -F: '($3==0 || $3>=1000){print $1 \":\" $3 \":\" $7}' | head -n 120; "
+        "getent group sudo wheel admin 2>/dev/null"
+    )
+    return run_command(command, timeout=8)
+
+
+def collect_scheduled_tasks():
+    command = (
+        "systemctl list-timers --all --no-pager --plain 2>/dev/null | head -n 120; "
+        "ls -la /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/cron.weekly /etc/cron.monthly 2>/dev/null"
+    )
+    return run_command(command, timeout=10)
+
+
+def collect_container_posture():
+    commands = []
+    if command_available("docker"):
+        commands.append("docker ps --format 'docker {{.Names}} {{.Image}} {{.Ports}} {{.Status}}' 2>/dev/null | head -n 80")
+    if command_available("podman"):
+        commands.append("podman ps --format 'podman {{.Names}} {{.Image}} {{.Ports}} {{.Status}}' 2>/dev/null | head -n 80")
+    if not commands:
+        return {"status": "not_collected", "stdout": "", "stderr": "No supported container runtime found."}
+    return run_command(" ; ".join(commands), timeout=12)
+
+
+def collect_security_logs():
+    if command_available("journalctl"):
+        return run_command("journalctl -p warning..alert -n 80 --no-pager 2>/dev/null", timeout=12)
+    return {"status": "not_collected", "stdout": "", "stderr": "journalctl is not available."}
+
+
+def collect_time_sync():
+    if command_available("timedatectl"):
+        return run_command("timedatectl status", timeout=8)
+    return run_command("date -u", timeout=5)
+
+
+def collect_backup_hints():
+    command = (
+        "systemctl list-timers --all --no-pager --plain 2>/dev/null | grep -Ei 'backup|borg|restic|rsnapshot|duplicity|timeshift|rclone' || true; "
+        "for tool in borg restic rsnapshot duplicity timeshift rclone; do command -v \"$tool\" >/dev/null 2>&1 && echo \"tool:$tool\"; done"
+    )
+    return run_command(command, timeout=10)
+
+
+def collect_kernel_network_policy():
+    keys = (
+        "net.ipv4.ip_forward "
+        "net.ipv4.conf.all.accept_redirects "
+        "net.ipv4.conf.default.accept_redirects "
+        "net.ipv4.conf.all.send_redirects "
+        "net.ipv4.conf.all.rp_filter "
+        "net.ipv4.tcp_syncookies "
+        "net.ipv6.conf.all.accept_redirects"
+    )
+    return run_command(f"sysctl {keys}", timeout=8)
+
+
+def collect_endpoint_protection():
+    command = (
+        "systemctl is-active auditd 2>/dev/null | sed 's/^/auditd:/' || true; "
+        "systemctl is-active clamav-daemon 2>/dev/null | sed 's/^/clamav-daemon:/' || true; "
+        "command -v clamscan >/dev/null 2>&1 && clamscan --version | head -n 1 || true"
+    )
+    return run_command(command, timeout=8)
+
+
+def collect_windows_service_health():
+    return run_command(
+        'powershell -NoProfile -Command "Get-CimInstance Win32_Service | '
+        "Where-Object {$_.StartMode -eq 'Auto' -and $_.State -ne 'Running'} | "
+        'Select-Object -First 40 Name,DisplayName,State,StartMode | ConvertTo-Json -Compress"',
+        timeout=14,
+    )
+
+
+def collect_windows_firewall_posture():
+    return run_command(
+        'powershell -NoProfile -Command "Get-NetFirewallProfile | '
+        'Select-Object Name,Enabled,DefaultInboundAction,DefaultOutboundAction | ConvertTo-Json -Compress"',
+        timeout=12,
+    )
+
+
+def collect_windows_auth_policy():
+    return run_command("net accounts", timeout=10)
+
+
+def collect_windows_local_accounts():
+    return run_command("net user && net localgroup administrators", timeout=12)
+
+
+def collect_windows_scheduled_tasks():
+    return run_command(
+        'powershell -NoProfile -Command "Get-ScheduledTask | '
+        'Select-Object -First 80 TaskName,State,TaskPath | ConvertTo-Json -Compress"',
+        timeout=14,
+    )
+
+
+def collect_windows_container_posture():
+    return run_command(
+        'powershell -NoProfile -Command "if (Get-Command docker -ErrorAction SilentlyContinue) { '
+        "docker ps --format '{{.Names}} {{.Image}} {{.Ports}} {{.Status}}' }\"",
+        timeout=12,
+    )
+
+
+def collect_windows_security_logs():
+    return run_command(
+        'powershell -NoProfile -Command "Get-WinEvent -LogName System -MaxEvents 40 | '
+        "Where-Object {$_.LevelDisplayName -in @('Critical','Error','Warning')} | "
+        'Select-Object TimeCreated,ProviderName,LevelDisplayName,Id,Message | ConvertTo-Json -Compress"',
+        timeout=16,
+    )
+
+
+def collect_windows_time_sync():
+    return run_command("w32tm /query /status", timeout=10)
+
+
+def collect_windows_backup_hints():
+    return run_command(
+        'powershell -NoProfile -Command "Get-ScheduledTask | '
+        "Where-Object {$_.TaskName -match 'backup|restore|history|sync'} | "
+        'Select-Object TaskName,State,TaskPath | ConvertTo-Json -Compress"',
+        timeout=12,
+    )
+
+
+def collect_windows_endpoint_protection():
+    return run_command(
+        'powershell -NoProfile -Command "if (Get-Command Get-MpComputerStatus -ErrorAction SilentlyContinue) { '
+        'Get-MpComputerStatus | Select-Object AMServiceEnabled,AntivirusEnabled,RealTimeProtectionEnabled,AntispywareEnabled,NISEnabled | ConvertTo-Json -Compress }"',
+        timeout=12,
+    )
 
 
 def summarize_checks(checks):
