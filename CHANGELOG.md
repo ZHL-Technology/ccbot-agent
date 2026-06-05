@@ -6,6 +6,8 @@ The project follows semantic versioning.
 
 ## Unreleased
 
+## 0.1.9 - 2026-06-05
+
 ### Added
 
 - Added GPU diagnostics to agent evidence, including NVIDIA `nvidia-smi`
@@ -15,6 +17,15 @@ The project follows semantic versioning.
   status for identity, resources, ports, services, updates, certificates, GPU,
   firewall, authentication, privileged accounts, scheduled work, containers,
   logs, time sync, backups, kernel network policy, and endpoint protection.
+
+### Changed
+
+- Agent API requests now handle DNS, timeout, and network failures as retryable
+  errors instead of crashing the Windows background monitor.
+- Daily reports are only marked as delivered after a successful platform
+  response.
+- The long-running agent loop now logs unexpected runtime errors and continues
+  monitoring instead of showing an unhandled exception popup.
 
 ## 0.1.8 - 2026-05-19
 

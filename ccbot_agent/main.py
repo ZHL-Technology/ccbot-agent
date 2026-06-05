@@ -15,7 +15,7 @@ from pathlib import Path
 try:
     from ccbot_agent import __version__
 except ImportError:
-    __version__ = "0.1.8"
+    __version__ = "0.1.9"
 
 
 DEFAULT_CONFIG = Path("/etc/ccbot-agent/config.json")
@@ -186,6 +186,19 @@ def post_json(url, payload, token=None, timeout=20):
                 "CCBot Agent traffic."
             )
         return exc.code, payload
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        reason = getattr(exc, "reason", None) or str(exc)
+        return 0, {
+            "ok": False,
+            "code": "network_unreachable",
+            "error": (
+                "CCBot Agent could not reach the CyberCare AI platform. It will retry "
+                "automatically. Check DNS, internet access, firewall, proxy, or the "
+                "configured platform URL."
+            ),
+            "detail": str(reason),
+            "url": url,
+        }
 
 
 def platform_url(config):
@@ -699,18 +712,21 @@ def run_loop(config_path):
     report_every = int(config.get("report_every_seconds", 86400))
     last_report = float(state.get("last_report_ts", 0))
     while True:
-        status, payload = send_heartbeat(config, state)
-        if status >= 400:
-            print(f"Heartbeat failed: {payload}", file=sys.stderr)
-        now = time.time()
-        if now - last_report >= report_every:
-            status, payload = send_report(config, state, period="daily")
-            if status < 400:
-                state["last_report_ts"] = now
-                write_json(config.get("state_path", str(DEFAULT_STATE)), state)
-                last_report = now
-            else:
-                print(f"Report failed: {payload}", file=sys.stderr)
+        try:
+            status, payload = send_heartbeat(config, state)
+            if status == 0 or status >= 400:
+                print(f"Heartbeat failed: {payload}", file=sys.stderr)
+            now = time.time()
+            if now - last_report >= report_every:
+                status, payload = send_report(config, state, period="daily")
+                if 200 <= status < 400:
+                    state["last_report_ts"] = now
+                    write_json(config.get("state_path", str(DEFAULT_STATE)), state)
+                    last_report = now
+                else:
+                    print(f"Report failed: {payload}", file=sys.stderr)
+        except Exception as exc:
+            print(f"CCBot Agent runtime error: {exc}", file=sys.stderr)
         time.sleep(interval)
 
 
