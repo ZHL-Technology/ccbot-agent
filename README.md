@@ -4,7 +4,7 @@ CCBot Agent is the installable monitoring agent for CyberCare AI. The Linux
 agent runs as a managed service today, and the Windows installer preview gives
 desktop and Windows Server users a simple token-based setup path.
 
-Current version: `0.1.12`
+Current version: `0.1.13`
 
 Status: preview foundation. The agent is ready for controlled testing and will
 continue to evolve with signed releases, stronger policy controls, and deeper
@@ -111,7 +111,7 @@ Use a pinned release tag for repeatable installs:
 ```bash
 export CCBOT_PLATFORM_URL="https://cybercareai.io"
 export CCBOT_ENROLLMENT_TOKEN="PASTE_ONE_TIME_TOKEN_HERE"
-export CCBOT_AGENT_VERSION="v0.1.12"
+export CCBOT_AGENT_VERSION="v0.1.13"
 
 curl -fsSL "https://raw.githubusercontent.com/ZHL-Technology/ccbot-agent/${CCBOT_AGENT_VERSION}/install.sh" -o /tmp/ccbot-agent-install.sh
 sudo CCBOT_PLATFORM_URL="$CCBOT_PLATFORM_URL" CCBOT_ENROLLMENT_TOKEN="$CCBOT_ENROLLMENT_TOKEN" bash /tmp/ccbot-agent-install.sh
@@ -131,7 +131,7 @@ CCBot-Windows-Installer.exe
 Download path for tagged releases:
 
 ```text
-https://github.com/ZHL-Technology/ccbot-agent/releases/download/v0.1.12/CCBot-Windows-Installer-v0.1.12.exe
+https://github.com/ZHL-Technology/ccbot-agent/releases/download/v0.1.13/CCBot-Windows-Installer-v0.1.13.exe
 ```
 
 The installer asks for:
@@ -247,7 +247,7 @@ python3 -m ccbot_agent.main --version
 For a controlled upgrade, choose the release tag explicitly:
 
 ```bash
-export CCBOT_AGENT_VERSION="v0.1.12"
+export CCBOT_AGENT_VERSION="v0.1.13"
 curl -fsSL "https://raw.githubusercontent.com/ZHL-Technology/ccbot-agent/${CCBOT_AGENT_VERSION}/install.sh" -o /tmp/ccbot-agent-install.sh
 sudo CCBOT_PLATFORM_URL="https://cybercareai.io" CCBOT_ENROLLMENT_TOKEN="PASTE_ONE_TIME_TOKEN_HERE" bash /tmp/ccbot-agent-install.sh
 ```
@@ -289,19 +289,19 @@ Version data is kept in:
 - `pyproject.toml`
 - `ccbot_agent/__init__.py`
 - `install.sh`
-- Git tags such as `v0.1.12`
+- Git tags such as `v0.1.13`
 
 To prepare a future version:
 
 ```bash
-python3 scripts/bump_version.py 0.1.12
+python3 scripts/bump_version.py 0.1.13
 ```
 
 Then update `CHANGELOG.md`, commit the change, and create a signed or annotated
 release tag:
 
 ```bash
-git tag -a v0.1.12 -m "CCBot Agent v0.1.12"
+git tag -a v0.1.13 -m "CCBot Agent v0.1.13"
 git push origin main --tags
 ```
 

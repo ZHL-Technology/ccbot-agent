@@ -6,6 +6,13 @@ The project follows semantic versioning.
 
 ## Unreleased
 
+## 0.1.13 - 2026-06-09
+
+### Changed
+
+- Published a test release for validating the Windows background update prompt
+  and self-update flow from CCBot Agent 0.1.12.
+
 ## 0.1.12 - 2026-06-09
 
 ### Added
