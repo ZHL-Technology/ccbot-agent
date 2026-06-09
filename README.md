@@ -4,7 +4,7 @@ CCBot Agent is the installable monitoring agent for CyberCare AI. The Linux
 agent runs as a managed service today, and the Windows installer preview gives
 desktop and Windows Server users a simple token-based setup path.
 
-Current version: `0.1.19`
+Current version: `0.2.9`
 
 Status: preview foundation. The agent is ready for controlled testing and will
 continue to evolve with signed releases, stronger policy controls, and deeper
@@ -111,7 +111,7 @@ Use a pinned release tag for repeatable installs:
 ```bash
 export CCBOT_PLATFORM_URL="https://cybercareai.io"
 export CCBOT_ENROLLMENT_TOKEN="PASTE_ONE_TIME_TOKEN_HERE"
-export CCBOT_AGENT_VERSION="v0.1.19"
+export CCBOT_AGENT_VERSION="v0.2.9"
 
 curl -fsSL "https://raw.githubusercontent.com/ZHL-Technology/ccbot-agent/${CCBOT_AGENT_VERSION}/install.sh" -o /tmp/ccbot-agent-install.sh
 sudo CCBOT_PLATFORM_URL="$CCBOT_PLATFORM_URL" CCBOT_ENROLLMENT_TOKEN="$CCBOT_ENROLLMENT_TOKEN" bash /tmp/ccbot-agent-install.sh
@@ -131,7 +131,7 @@ CCBot-Windows-Installer.exe
 Download path for tagged releases:
 
 ```text
-https://github.com/ZHL-Technology/ccbot-agent/releases/download/v0.1.19/CCBot-Windows-Installer-v0.1.19.exe
+https://github.com/ZHL-Technology/ccbot-agent/releases/download/v0.2.9/CCBot-Windows-Installer-v0.2.9.exe
 ```
 
 The installer asks for:
@@ -272,7 +272,7 @@ python3 -m ccbot_agent.main --version
 For a controlled upgrade, choose the release tag explicitly:
 
 ```bash
-export CCBOT_AGENT_VERSION="v0.1.19"
+export CCBOT_AGENT_VERSION="v0.2.9"
 curl -fsSL "https://raw.githubusercontent.com/ZHL-Technology/ccbot-agent/${CCBOT_AGENT_VERSION}/install.sh" -o /tmp/ccbot-agent-install.sh
 sudo CCBOT_PLATFORM_URL="https://cybercareai.io" CCBOT_ENROLLMENT_TOKEN="PASTE_ONE_TIME_TOKEN_HERE" bash /tmp/ccbot-agent-install.sh
 ```
@@ -297,16 +297,18 @@ not remain in the dashboard.
 
 ## Versioning
 
-CCBot Agent uses semantic versioning:
+CCBot Agent uses CCBot product versioning:
 
 ```text
 MAJOR.MINOR.PATCH
 ```
 
-- Patch releases fix bugs without changing expected behavior.
-- Minor releases add compatible features or new checks.
-- Major releases may change enrollment, configuration, API contracts, or
-  operating behavior.
+- MINOR and PATCH are single digits from `0` to `9`.
+- After PATCH reaches `9`, the next release rolls PATCH back to `0` and
+  increments MINOR.
+- After MINOR reaches `9`, the next rollover increments MAJOR.
+- Example: the release after `0.1.9` is `0.2.0`; the release after `0.9.9` is
+  `1.0.0`.
 
 Version data is kept in:
 
@@ -314,19 +316,19 @@ Version data is kept in:
 - `pyproject.toml`
 - `ccbot_agent/__init__.py`
 - `install.sh`
-- Git tags such as `v0.1.19`
+- Git tags such as `v0.2.9`
 
 To prepare a future version:
 
 ```bash
-python3 scripts/bump_version.py 0.1.19
+python3 scripts/bump_version.py 0.2.9
 ```
 
 Then update `CHANGELOG.md`, commit the change, and create a signed or annotated
 release tag:
 
 ```bash
-git tag -a v0.1.19 -m "CCBot Agent v0.1.19"
+git tag -a v0.2.9 -m "CCBot Agent v0.2.9"
 git push origin main --tags
 ```
 

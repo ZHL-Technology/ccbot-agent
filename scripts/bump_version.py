@@ -5,7 +5,15 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
+VERSION_PATTERN = re.compile(r"^\d+\.\d\.\d$")
+
+
+def validate_version(version):
+    if not VERSION_PATTERN.match(version):
+        raise SystemExit(
+            "Usage: scripts/bump_version.py MAJOR.MINOR.PATCH\n"
+            "CCBot versions use single-digit minor and patch numbers, for example 0.2.9."
+        )
 
 
 def replace(path, pattern, replacement):
@@ -17,10 +25,11 @@ def replace(path, pattern, replacement):
 
 
 def main(argv):
-    if len(argv) != 2 or not VERSION_PATTERN.match(argv[1]):
+    if len(argv) != 2:
         raise SystemExit("Usage: scripts/bump_version.py MAJOR.MINOR.PATCH")
 
     version = argv[1]
+    validate_version(version)
     tag = f"v{version}"
 
     (ROOT / "VERSION").write_text(f"{version}\n", encoding="utf-8")

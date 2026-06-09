@@ -15,7 +15,7 @@ from pathlib import Path
 try:
     from ccbot_agent import __version__
 except ImportError:
-    __version__ = "0.1.19"
+    __version__ = "0.2.9"
 
 
 DEFAULT_CONFIG = Path("/etc/ccbot-agent/config.json")

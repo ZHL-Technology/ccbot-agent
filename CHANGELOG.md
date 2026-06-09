@@ -2,9 +2,19 @@
 
 All notable changes to CCBot Agent are documented here.
 
-The project follows semantic versioning.
+The project follows CCBot product versioning: MAJOR.MINOR.PATCH with
+single-digit MINOR and PATCH rollover.
 
 ## Unreleased
+
+## 0.2.9 - 2026-06-09
+
+### Changed
+
+- Renumbered the current Windows tray resilience release from `0.1.19` to
+  `0.2.9` to match CCBot product versioning.
+- Updated release tooling to reject two-digit minor or patch numbers so future
+  versions roll over cleanly.
 
 ## 0.1.19 - 2026-06-09
 
