@@ -6,6 +6,20 @@ The project follows semantic versioning.
 
 ## Unreleased
 
+## 0.1.16 - 2026-06-09
+
+### Changed
+
+- Reworked the Windows tray icon into a high-contrast notification-area icon so
+  it remains visible at small taskbar sizes.
+- Added a CCBot Agent Status shortcut in the Start Menu and on the Desktop as a
+  reliable fallback when Windows hides notification-area icons.
+- The installer and self-update flow now open the status window after CCBot
+  starts, so users can immediately confirm the bot version, state, update
+  controls, and pause/resume controls.
+- Added a runtime status file so the standalone status window can show the
+  background agent state even when opened outside the tray process.
+
 ## 0.1.15 - 2026-06-09
 
 ### Changed

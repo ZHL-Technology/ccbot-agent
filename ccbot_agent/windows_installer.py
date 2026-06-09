@@ -37,6 +37,7 @@ UPDATE_DIR = APP_DIR / "updates"
 UPDATE_STATE_PATH = APP_DIR / "update-state.json"
 AGENT_CONTROL_PATH = APP_DIR / "agent-control.json"
 RUNTIME_LOG_PATH = APP_DIR / "runtime.log"
+RUNTIME_STATUS_PATH = APP_DIR / "runtime-status.json"
 TASK_NAME = "CCBot Agent"
 RUN_KEY_PATH = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
 UPDATE_MANIFEST_HOSTS = {"cybercareai.io", "www.cybercareai.io"}
@@ -157,6 +158,23 @@ def write_runtime_log(message):
         pass
 
 
+def read_runtime_status():
+    try:
+        return json.loads(RUNTIME_STATUS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def write_runtime_status(status):
+    try:
+        APP_DIR.mkdir(parents=True, exist_ok=True)
+        payload = dict(status)
+        payload["updated_at"] = time.time()
+        RUNTIME_STATUS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def should_prompt_for_update(update_info):
     state = read_update_state()
     if state.get("version") != display_version(update_info.get("version")):
@@ -207,12 +225,43 @@ def format_local_time(timestamp=None):
 def update_agent_status(**changes):
     with AGENT_STATUS_LOCK:
         AGENT_STATUS.update(changes)
+        snapshot = dict(AGENT_STATUS)
+    write_runtime_status(snapshot)
+
+
+def detect_agent_process_running():
+    if not sys.platform.startswith("win"):
+        return False
+    script = (
+        "Get-CimInstance Win32_Process | "
+        "Where-Object { $_.CommandLine -and $_.CommandLine -match '--agent-run' -and "
+        "$_.CommandLine -match 'CCBot-Windows-Installer' } | "
+        "Select-Object -First 1 -ExpandProperty ProcessId"
+    )
+    try:
+        completed = run_hidden(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            timeout=8,
+        )
+    except FileNotFoundError:
+        return False
+    return completed.returncode == 0 and bool((completed.stdout or "").strip())
 
 
 def get_agent_status():
     with AGENT_STATUS_LOCK:
         status = dict(AGENT_STATUS)
+    runtime_status = read_runtime_status()
+    if runtime_status:
+        status.update(runtime_status)
     status["enabled"] = is_agent_enabled()
+    if sys.platform.startswith("win"):
+        process_seen = detect_agent_process_running()
+        try:
+            status_age = time.time() - float(status.get("updated_at", 0))
+        except (TypeError, ValueError):
+            status_age = 999999
+        status["running"] = process_seen or (bool(status.get("running")) and status_age < 600)
     return status
 
 
@@ -487,9 +536,69 @@ def create_startup_entry(executable):
         return f"{method} (current-user startup was blocked: {run_key_error})"
 
 
+def powershell_single_quote(value):
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def create_windows_shortcut(shortcut_path, executable, arguments, description):
+    shortcut_path = Path(shortcut_path)
+    shortcut_path.parent.mkdir(parents=True, exist_ok=True)
+    script = (
+        "$shell = New-Object -ComObject WScript.Shell; "
+        f"$shortcut = $shell.CreateShortcut({powershell_single_quote(shortcut_path)}); "
+        f"$shortcut.TargetPath = {powershell_single_quote(executable)}; "
+        f"$shortcut.Arguments = {powershell_single_quote(arguments)}; "
+        f"$shortcut.WorkingDirectory = {powershell_single_quote(APP_DIR)}; "
+        f"$shortcut.IconLocation = {powershell_single_quote(str(executable) + ',0')}; "
+        f"$shortcut.Description = {powershell_single_quote(description)}; "
+        "$shortcut.Save()"
+    )
+    completed = run_hidden(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+        timeout=15,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "Windows did not return a detailed error."
+        raise RuntimeError(detail)
+
+
+def create_status_shortcuts(executable):
+    if not sys.platform.startswith("win"):
+        return []
+    arguments = f'--status --config "{CONFIG_PATH}"'
+    created = []
+    shortcut_targets = []
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        shortcut_targets.append(
+            Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "CyberCare AI" / "CCBot Agent Status.lnk"
+        )
+    userprofile = os.environ.get("USERPROFILE")
+    if userprofile:
+        shortcut_targets.append(Path(userprofile) / "Desktop" / "CCBot Agent Status.lnk")
+
+    for shortcut_path in shortcut_targets:
+        try:
+            create_windows_shortcut(shortcut_path, executable, arguments, "Open CCBot Agent status and controls")
+            created.append(str(shortcut_path))
+        except RuntimeError as exc:
+            write_runtime_log(f"Could not create shortcut {shortcut_path}: {exc}")
+    return created
+
+
 def start_agent(executable):
     subprocess.Popen(
         [str(executable), "--agent-run", "--config", str(CONFIG_PATH)],
+        cwd=str(APP_DIR),
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+
+def start_status_window(executable):
+    if not sys.platform.startswith("win"):
+        return
+    subprocess.Popen(
+        [str(executable), "--status", "--config", str(CONFIG_PATH)],
         cwd=str(APP_DIR),
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
@@ -540,13 +649,16 @@ def apply_self_update(config_path, parent_pid=0):
         stop_existing_agent_processes(target)
         copy_executable_with_retries(sys.executable, target)
         startup_method = create_startup_entry(target)
+        create_status_shortcuts(target)
         if Path(config_path).exists():
             start_agent(target)
+            start_status_window(target)
         show_update_message(
             "CCBot update complete",
             (
                 f"CCBot Agent {display_version(__version__)} has been installed.\n\n"
-                f"Startup method: {startup_method}"
+                f"Startup method: {startup_method}\n"
+                "You can also open CCBot Agent Status from the Start Menu or Desktop."
             ),
         )
         return 0
@@ -798,19 +910,20 @@ def show_agent_status_window(config_path):
 
 
 def load_tray_image():
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageDraw, ImageFont
 
-    image_path = resource_path("assets/ccbot.png")
-    try:
-        if image_path.exists():
-            return Image.open(image_path).convert("RGBA").resize((64, 64))
-    except Exception:
-        pass
-
-    image = Image.new("RGBA", (64, 64), (5, 12, 22, 255))
+    image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    draw.ellipse((8, 8, 56, 56), fill=(34, 211, 238, 255))
-    draw.text((21, 22), "CC", fill=(5, 12, 22, 255))
+    draw.ellipse((4, 4, 60, 60), fill=(14, 165, 233, 255), outline=(255, 255, 255, 255), width=3)
+    draw.ellipse((13, 13, 51, 51), fill=(5, 12, 22, 255))
+    draw.ellipse((22, 25, 28, 31), fill=(45, 212, 191, 255))
+    draw.ellipse((36, 25, 42, 31), fill=(45, 212, 191, 255))
+    draw.arc((24, 27, 40, 43), 20, 160, fill=(255, 255, 255, 255), width=2)
+    try:
+        font = ImageFont.truetype("arial.ttf", 10)
+    except Exception:
+        font = ImageFont.load_default()
+    draw.text((20, 44), "CC", fill=(255, 255, 255, 255), font=font)
     return image
 
 
@@ -937,9 +1050,17 @@ def install(platform_url, enrollment_token, status_callback, progress_callback, 
     startup_method = create_startup_entry(executable)
     log_callback(f"Startup registered with {startup_method}.")
 
-    step(82, "Starting CCBot in the background...")
+    step(76, "Creating CCBot status shortcuts...")
+    shortcuts = create_status_shortcuts(executable)
+    if shortcuts:
+        log_callback("Status shortcut created in Start Menu and on Desktop.")
+    else:
+        log_callback("Status shortcut could not be created, but CCBot can still run in the background.")
+
+    step(88, "Starting CCBot in the background...")
     start_agent(executable)
-    step(100, "Installation complete. CCBot is running. You can close this window.")
+    start_status_window(executable)
+    step(100, "Installation complete. CCBot is running. The status window is opening now.")
 
 
 def launch_gui():
@@ -1337,11 +1458,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="CCBot Windows Installer")
     parser.add_argument("--agent-run", action="store_true")
     parser.add_argument("--apply-update", action="store_true")
+    parser.add_argument("--status", action="store_true")
     parser.add_argument("--config", default=str(CONFIG_PATH))
     parser.add_argument("--parent-pid", type=int, default=0)
     args = parser.parse_args(argv)
     if args.apply_update:
         raise SystemExit(apply_self_update(args.config, parent_pid=args.parent_pid))
+    elif args.status:
+        show_agent_status_window(args.config)
     elif args.agent_run:
         run_agent_with_update_monitor(args.config)
     else:
