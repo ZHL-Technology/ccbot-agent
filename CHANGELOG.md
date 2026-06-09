@@ -6,6 +6,16 @@ The project follows semantic versioning.
 
 ## Unreleased
 
+## 0.1.18 - 2026-06-09
+
+### Added
+
+- Added a red badge overlay on the Windows tray icon when CCBot detects a newer
+  release.
+- Added update availability details to the tray menu and local status window.
+- Added an `Install update now` tray action that appears when an update is
+  available.
+
 ## 0.1.17 - 2026-06-09
 
 ### Fixed

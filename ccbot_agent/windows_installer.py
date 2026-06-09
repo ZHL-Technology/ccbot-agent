@@ -194,6 +194,12 @@ AGENT_STATUS = {
     "last_heartbeat": "",
     "last_report": "",
     "last_error": "",
+    "update_available": False,
+    "update_version": "",
+    "update_download_url": "",
+    "update_release_notes_url": "",
+    "update_notes": "",
+    "update_checked_at": "",
 }
 
 
@@ -229,6 +235,41 @@ def update_agent_status(**changes):
     write_runtime_status(snapshot)
 
 
+def set_update_available(update_info):
+    update_agent_status(
+        update_available=True,
+        update_version=display_version(update_info.get("version") or update_info.get("display_version")),
+        update_download_url=str(update_info.get("download_url") or ""),
+        update_release_notes_url=str(update_info.get("release_notes_url") or ""),
+        update_notes=str(update_info.get("notes") or ""),
+        update_checked_at=format_local_time(),
+    )
+
+
+def clear_update_available():
+    update_agent_status(
+        update_available=False,
+        update_version="",
+        update_download_url="",
+        update_release_notes_url="",
+        update_notes="",
+        update_checked_at=format_local_time(),
+    )
+
+
+def update_info_from_status(status=None):
+    status = get_agent_status() if status is None else status
+    if not status.get("update_available") or not is_newer_version(status.get("update_version")):
+        return None
+    return {
+        "version": str(status.get("update_version") or "").lstrip("vV"),
+        "display_version": display_version(status.get("update_version")),
+        "download_url": str(status.get("update_download_url") or ""),
+        "release_notes_url": str(status.get("update_release_notes_url") or ""),
+        "notes": str(status.get("update_notes") or ""),
+    }
+
+
 def detect_agent_process_running():
     if not sys.platform.startswith("win"):
         return False
@@ -262,6 +303,8 @@ def get_agent_status():
         except (TypeError, ValueError):
             status_age = 999999
         status["running"] = process_seen or (bool(status.get("running")) and status_age < 600)
+    if status.get("update_available") and not is_newer_version(status.get("update_version")):
+        status["update_available"] = False
     return status
 
 
@@ -816,8 +859,12 @@ def background_update_monitor(config_path):
     while True:
         try:
             update_info = fetch_latest_update()
-            if update_info and should_prompt_for_update(update_info):
-                prompt_background_update(update_info, config_path)
+            if update_info:
+                set_update_available(update_info)
+                if should_prompt_for_update(update_info):
+                    prompt_background_update(update_info, config_path)
+            else:
+                clear_update_available()
         except Exception:
             pass
         time.sleep(max(900, UPDATE_CHECK_INTERVAL_SECONDS))
@@ -832,9 +879,12 @@ def check_updates_now(config_path, *, show_up_to_date=True):
             return
 
         if update_info:
+            set_update_available(update_info)
             prompt_background_update(update_info, config_path)
-        elif show_up_to_date:
-            show_update_message("CCBot is up to date", f"You are already using {display_version(__version__)}.")
+        else:
+            clear_update_available()
+            if show_up_to_date:
+                show_update_message("CCBot is up to date", f"You are already using {display_version(__version__)}.")
 
     threading.Thread(target=worker, daemon=True).start()
 
@@ -843,8 +893,14 @@ def agent_status_lines():
     status = get_agent_status()
     bot_status = "Active" if status["enabled"] else "Paused"
     process_status = "Running" if status["running"] else "Not running"
+    update_status = (
+        f"Update available: {status.get('update_version')}. Click the update button to install."
+        if status.get("update_available")
+        else "No update detected"
+    )
     return [
         ("Version", display_version(__version__)),
+        ("Update status", update_status),
         ("Bot status", bot_status),
         ("Background process", process_status),
         ("Current state", status.get("state") or "Unknown"),
@@ -862,7 +918,7 @@ def show_agent_status_window(config_path):
     root = tk.Tk()
     root.title("CCBot Agent status")
     configure_window_identity(root)
-    root.geometry("620x430")
+    root.geometry("650x470")
     root.resizable(False, False)
 
     frame = ttk.Frame(root, padding=22)
@@ -896,6 +952,9 @@ def show_agent_status_window(config_path):
         refresh_rows()
         toggle_button.configure(text="Pause CCBot" if is_agent_enabled() else "Resume CCBot")
 
+    def update_button_text():
+        return "Install update now" if get_agent_status().get("update_available") else "Check for updates now"
+
     render_rows()
     refresh_rows()
 
@@ -903,13 +962,20 @@ def show_agent_status_window(config_path):
     buttons.pack(fill="x", pady=(16, 0))
     toggle_button = ttk.Button(buttons, text="Pause CCBot" if is_agent_enabled() else "Resume CCBot", command=toggle_agent)
     toggle_button.pack(side="left")
-    ttk.Button(buttons, text="Check for updates now", command=lambda: check_updates_now(config_path)).pack(side="left", padx=(8, 0))
+    update_button = ttk.Button(buttons, text=update_button_text(), command=lambda: check_updates_now(config_path))
+    update_button.pack(side="left", padx=(8, 0))
     ttk.Button(buttons, text="Close", command=root.destroy).pack(side="right")
+
+    def refresh_update_button():
+        update_button.configure(text=update_button_text())
+        root.after(5000, refresh_update_button)
+
+    refresh_update_button()
 
     root.mainloop()
 
 
-def load_tray_image():
+def load_tray_image(update_available=False):
     from PIL import Image, ImageDraw, ImageFont
 
     image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
@@ -924,10 +990,16 @@ def load_tray_image():
     except Exception:
         font = ImageFont.load_default()
     draw.text((20, 44), "CC", fill=(255, 255, 255, 255), font=font)
+    if update_available:
+        draw.ellipse((43, 2, 63, 22), fill=(255, 255, 255, 255))
+        draw.ellipse((47, 6, 59, 18), fill=(220, 38, 38, 255))
     return image
 
 
-def tray_title():
+def tray_title(status=None):
+    status = get_agent_status() if status is None else status
+    if status.get("update_available"):
+        return f"CCBot Agent {display_version(__version__)} - Update available {status.get('update_version')}"
     status = "Active" if is_agent_enabled() else "Paused"
     return f"CCBot Agent {display_version(__version__)} - {status}"
 
@@ -943,6 +1015,12 @@ def run_tray_icon(config_path):
         bot_status = "Active" if status["enabled"] else "Paused"
         return f"Bot: {bot_status} / {status.get('state') or 'Unknown'}"
 
+    def menu_update_status(_item):
+        status = get_agent_status()
+        if status.get("update_available"):
+            return f"Update available: {status.get('update_version')}"
+        return "No update available"
+
     def noop(_icon, _item):
         return None
 
@@ -951,7 +1029,9 @@ def run_tray_icon(config_path):
 
     def toggle_agent(icon, _item):
         set_agent_enabled(not is_agent_enabled())
-        icon.title = tray_title()
+        status = get_agent_status()
+        icon.title = tray_title(status)
+        icon.icon = load_tray_image(bool(status.get("update_available")))
         icon.update_menu()
         try:
             icon.notify("CCBot is active." if is_agent_enabled() else "CCBot is paused.", "CCBot Agent")
@@ -961,18 +1041,36 @@ def run_tray_icon(config_path):
     def check_update(_icon, _item):
         check_updates_now(config_path)
 
+    def install_update(_icon, _item):
+        update_info = update_info_from_status()
+        if update_info:
+            prompt_background_update(update_info, config_path)
+        else:
+            check_updates_now(config_path)
+
+    def has_update(_item):
+        return bool(update_info_from_status())
+
     def open_status(_icon, _item):
         threading.Thread(target=lambda: show_agent_status_window(config_path), daemon=True).start()
 
     menu = pystray.Menu(
         pystray.MenuItem(menu_version, noop, enabled=False),
         pystray.MenuItem(menu_status, noop, enabled=False),
+        pystray.MenuItem(menu_update_status, noop, enabled=False),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Open status", open_status, default=True),
         pystray.MenuItem("Check for updates now", check_update),
+        pystray.MenuItem("Install update now", install_update, enabled=has_update),
         pystray.MenuItem(toggle_text, toggle_agent, checked=lambda _item: is_agent_enabled()),
     )
-    icon = pystray.Icon("ccbot-agent", load_tray_image(), title=tray_title(), menu=menu)
+    initial_status = get_agent_status()
+    icon = pystray.Icon(
+        "ccbot-agent",
+        load_tray_image(bool(initial_status.get("update_available"))),
+        title=tray_title(initial_status),
+        menu=menu,
+    )
 
     def setup_icon(active_icon):
         active_icon.visible = True
@@ -989,7 +1087,9 @@ def run_tray_icon(config_path):
     def refresh_icon():
         while True:
             try:
-                icon.title = tray_title()
+                status = get_agent_status()
+                icon.title = tray_title(status)
+                icon.icon = load_tray_image(bool(status.get("update_available")))
                 icon.update_menu()
             except Exception:
                 return
