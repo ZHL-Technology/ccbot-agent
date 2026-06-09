@@ -6,6 +6,17 @@ The project follows semantic versioning.
 
 ## Unreleased
 
+## 0.1.19 - 2026-06-09
+
+### Changed
+
+- The Windows tray icon refresh loop now reasserts visibility every few seconds
+  so the icon can recover after notification-area or Explorer refreshes.
+- The Windows background agent now restarts the tray loop if pystray exits
+  without an error.
+- Added a Start Menu shortcut named `Check CCBot Updates` so users can check
+  and install updates even if the tray icon is hidden or unavailable.
+
 ## 0.1.18 - 2026-06-09
 
 ### Added

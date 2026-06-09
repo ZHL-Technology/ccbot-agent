@@ -608,21 +608,38 @@ def create_windows_shortcut(shortcut_path, executable, arguments, description):
 def create_status_shortcuts(executable):
     if not sys.platform.startswith("win"):
         return []
-    arguments = f'--status --config "{CONFIG_PATH}"'
     created = []
     shortcut_targets = []
     appdata = os.environ.get("APPDATA")
     if appdata:
-        shortcut_targets.append(
-            Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "CyberCare AI" / "CCBot Agent Status.lnk"
+        start_menu_dir = Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "CyberCare AI"
+        shortcut_targets.extend(
+            [
+                (
+                    start_menu_dir / "CCBot Agent Status.lnk",
+                    f'--status --config "{CONFIG_PATH}"',
+                    "Open CCBot Agent status and controls",
+                ),
+                (
+                    start_menu_dir / "Check CCBot Updates.lnk",
+                    f'--check-updates --config "{CONFIG_PATH}"',
+                    "Check for CCBot Agent updates",
+                ),
+            ]
         )
     userprofile = os.environ.get("USERPROFILE")
     if userprofile:
-        shortcut_targets.append(Path(userprofile) / "Desktop" / "CCBot Agent Status.lnk")
+        shortcut_targets.append(
+            (
+                Path(userprofile) / "Desktop" / "CCBot Agent Status.lnk",
+                f'--status --config "{CONFIG_PATH}"',
+                "Open CCBot Agent status and controls",
+            )
+        )
 
-    for shortcut_path in shortcut_targets:
+    for shortcut_path, arguments, description in shortcut_targets:
         try:
-            create_windows_shortcut(shortcut_path, executable, arguments, "Open CCBot Agent status and controls")
+            create_windows_shortcut(shortcut_path, executable, arguments, description)
             created.append(str(shortcut_path))
         except RuntimeError as exc:
             write_runtime_log(f"Could not create shortcut {shortcut_path}: {exc}")
@@ -889,6 +906,57 @@ def check_updates_now(config_path, *, show_up_to_date=True):
     threading.Thread(target=worker, daemon=True).start()
 
 
+def show_update_check_window(config_path):
+    root = tk.Tk()
+    root.title("CCBot update check")
+    configure_window_identity(root)
+    root.geometry("480x150")
+    root.resizable(False, False)
+
+    frame = ttk.Frame(root, padding=20)
+    frame.pack(fill="both", expand=True)
+    status_var = tk.StringVar(value="Checking for CCBot updates...")
+    ttk.Label(frame, text="CCBot update check", font=("Segoe UI", 13, "bold")).pack(anchor="w")
+    ttk.Label(frame, textvariable=status_var, wraplength=430).pack(anchor="w", pady=(8, 12))
+    progress = ttk.Progressbar(frame, mode="indeterminate")
+    progress.pack(fill="x")
+    progress.start(10)
+
+    def worker():
+        try:
+            update_info = fetch_latest_update()
+        except Exception as exc:
+            def show_failure():
+                progress.stop()
+                root.destroy()
+                show_update_message("CCBot update check failed", f"Could not check for updates.\n\n{exc}", kind="error")
+
+            root.after(0, show_failure)
+            return
+
+        if update_info:
+            set_update_available(update_info)
+
+            def show_update():
+                progress.stop()
+                root.destroy()
+                prompt_background_update(update_info, config_path)
+
+            root.after(0, show_update)
+        else:
+            clear_update_available()
+
+            def show_current():
+                progress.stop()
+                root.destroy()
+                show_update_message("CCBot is up to date", f"You are already using {display_version(__version__)}.")
+
+            root.after(0, show_current)
+
+    threading.Thread(target=worker, daemon=True).start()
+    root.mainloop()
+
+
 def agent_status_lines():
     status = get_agent_status()
     bot_status = "Active" if status["enabled"] else "Paused"
@@ -1088,12 +1156,14 @@ def run_tray_icon(config_path):
         while True:
             try:
                 status = get_agent_status()
+                icon.visible = True
                 icon.title = tray_title(status)
                 icon.icon = load_tray_image(bool(status.get("update_available")))
                 icon.update_menu()
             except Exception:
+                write_runtime_log("Tray refresh stopped.")
                 return
-            time.sleep(30)
+            time.sleep(10)
 
     icon.run(setup=setup_icon)
 
@@ -1106,21 +1176,28 @@ def run_agent_with_update_monitor(config_path):
     update_agent_status(enabled=is_agent_enabled(), running=True, state="Starting")
     threading.Thread(target=lambda: run_controlled_agent_loop(config_path), daemon=True).start()
     threading.Thread(target=lambda: background_update_monitor(config_path), daemon=True).start()
-    try:
-        run_tray_icon(config_path)
-    except Exception as exc:
-        write_runtime_log(f"Tray icon failed: {exc}")
-        update_agent_status(last_error=f"Tray icon unavailable: {exc}")
-        show_update_message(
-            "CCBot tray icon could not start",
-            (
-                "CCBot is still running in the background, but Windows did not allow the tray icon to start.\n\n"
-                f"Details were saved to {RUNTIME_LOG_PATH}."
-            ),
-            kind="error",
-        )
-        while True:
-            time.sleep(3600)
+    tray_failure_reported = False
+    while True:
+        try:
+            run_tray_icon(config_path)
+            write_runtime_log("Tray icon loop exited; restarting.")
+            update_agent_status(last_error="Tray icon restarted.")
+            time.sleep(3)
+        except Exception as exc:
+            write_runtime_log(f"Tray icon failed: {exc}")
+            update_agent_status(last_error=f"Tray icon unavailable: {exc}")
+            if not tray_failure_reported:
+                tray_failure_reported = True
+                show_update_message(
+                    "CCBot tray icon could not start",
+                    (
+                        "CCBot is still running in the background, but Windows did not allow the tray icon to start.\n\n"
+                        "You can open CCBot Agent Status from the Desktop or Start Menu.\n\n"
+                        f"Details were saved to {RUNTIME_LOG_PATH}."
+                    ),
+                    kind="error",
+                )
+            time.sleep(60)
 
 
 def install(platform_url, enrollment_token, status_callback, progress_callback, log_callback):
@@ -1154,9 +1231,9 @@ def install(platform_url, enrollment_token, status_callback, progress_callback, 
     step(76, "Creating CCBot status shortcuts...")
     shortcuts = create_status_shortcuts(executable)
     if shortcuts:
-        log_callback("Status shortcut created in Start Menu and on Desktop.")
+        log_callback("Status and update shortcuts created in Start Menu and on Desktop.")
     else:
-        log_callback("Status shortcut could not be created, but CCBot can still run in the background.")
+        log_callback("Status shortcuts could not be created, but CCBot can still run in the background.")
 
     step(88, "Starting CCBot in the background...")
     start_agent(executable)
@@ -1560,6 +1637,7 @@ def main(argv=None):
     parser.add_argument("--agent-run", action="store_true")
     parser.add_argument("--apply-update", action="store_true")
     parser.add_argument("--status", action="store_true")
+    parser.add_argument("--check-updates", action="store_true")
     parser.add_argument("--config", default=str(CONFIG_PATH))
     parser.add_argument("--parent-pid", type=int, default=0)
     args = parser.parse_args(argv)
@@ -1567,6 +1645,8 @@ def main(argv=None):
         raise SystemExit(apply_self_update(args.config, parent_pid=args.parent_pid))
     elif args.status:
         show_agent_status_window(args.config)
+    elif args.check_updates:
+        show_update_check_window(args.config)
     elif args.agent_run:
         run_agent_with_update_monitor(args.config)
     else:
