@@ -6,6 +6,16 @@ The project follows semantic versioning.
 
 ## Unreleased
 
+## 0.1.14 - 2026-06-09
+
+### Added
+
+- Added a Windows notification-area tray icon for CCBot Agent.
+- Added a local status window with version number, bot state, last heartbeat,
+  last report, operating system, install path, and last error.
+- Added tray actions for manual update checks and pausing or resuming CCBot
+  monitoring.
+
 ## 0.1.13 - 2026-06-09
 
 ### Changed

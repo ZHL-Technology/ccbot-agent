@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ccbot-agent"
-version = "0.1.13"
+version = "0.1.14"
 description = "CyberCare AI CCBot monitoring agent"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -25,6 +25,9 @@ classifiers = [
 
 [project.scripts]
 ccbot-agent = "ccbot_agent.main:main"
+
+[project.optional-dependencies]
+windows = ["pillow>=10", "pystray>=0.19"]
 
 [project.urls]
 Homepage = "https://cybercareai.io"

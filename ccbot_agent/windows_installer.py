@@ -1,8 +1,10 @@
 import argparse
 import json
 import os
+import platform
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -16,7 +18,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from ccbot_agent import __version__
-from ccbot_agent.main import enroll, run_loop
+from ccbot_agent.main import DEFAULT_STATE, enroll, ensure_enrolled, send_heartbeat, send_report, write_json
 
 
 APP_NAME = "CCBot Agent"
@@ -33,6 +35,7 @@ CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
 UPDATE_DIR = APP_DIR / "updates"
 UPDATE_STATE_PATH = APP_DIR / "update-state.json"
+AGENT_CONTROL_PATH = APP_DIR / "agent-control.json"
 TASK_NAME = "CCBot Agent"
 RUN_KEY_PATH = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
 UPDATE_MANIFEST_HOSTS = {"cybercareai.io", "www.cybercareai.io"}
@@ -153,6 +156,54 @@ def should_prompt_for_update(update_info):
     except (TypeError, ValueError):
         return True
     return time.time() - updated_at >= UPDATE_PROMPT_COOLDOWN_SECONDS
+
+
+AGENT_STATUS_LOCK = threading.Lock()
+AGENT_STATUS = {
+    "enabled": True,
+    "running": False,
+    "state": "Starting",
+    "last_heartbeat": "",
+    "last_report": "",
+    "last_error": "",
+}
+
+
+def read_agent_control():
+    try:
+        return json.loads(AGENT_CONTROL_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def is_agent_enabled():
+    return bool(read_agent_control().get("enabled", True))
+
+
+def set_agent_enabled(enabled):
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    AGENT_CONTROL_PATH.write_text(
+        json.dumps({"enabled": bool(enabled), "updated_at": time.time()}, indent=2),
+        encoding="utf-8",
+    )
+    update_agent_status(enabled=bool(enabled), state="Running" if enabled else "Paused by user")
+
+
+def format_local_time(timestamp=None):
+    timestamp = time.time() if timestamp is None else timestamp
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
+
+
+def update_agent_status(**changes):
+    with AGENT_STATUS_LOCK:
+        AGENT_STATUS.update(changes)
+
+
+def get_agent_status():
+    with AGENT_STATUS_LOCK:
+        status = dict(AGENT_STATUS)
+    status["enabled"] = is_agent_enabled()
+    return status
 
 
 def validate_update_url(url, allowed_hosts):
@@ -559,6 +610,72 @@ def prompt_background_update(update_info, config_path):
         show_background_update_progress(update_info, config_path)
 
 
+def sleep_responsive(seconds):
+    deadline = time.time() + max(0, seconds)
+    while time.time() < deadline:
+        time.sleep(min(5, max(0.2, deadline - time.time())))
+
+
+def run_controlled_agent_loop(config_path):
+    try:
+        config, state = ensure_enrolled(config_path)
+    except Exception as exc:
+        update_agent_status(running=False, state="Enrollment required", last_error=str(exc))
+        raise
+
+    interval = int(config.get("heartbeat_seconds", 300))
+    report_every = int(config.get("report_every_seconds", 86400))
+    last_report = float(state.get("last_report_ts", 0))
+    next_heartbeat = 0
+    update_agent_status(running=True, enabled=is_agent_enabled(), state="Running")
+
+    while True:
+        if not is_agent_enabled():
+            update_agent_status(enabled=False, running=True, state="Paused by user")
+            next_heartbeat = 0
+            sleep_responsive(5)
+            continue
+
+        now = time.time()
+        if now < next_heartbeat:
+            update_agent_status(enabled=True, running=True, state="Running")
+            sleep_responsive(min(5, next_heartbeat - now))
+            continue
+
+        try:
+            status, payload = send_heartbeat(config, state)
+            if status == 0 or status >= 400:
+                update_agent_status(
+                    enabled=True,
+                    running=True,
+                    state="Connection issue",
+                    last_error=f"Heartbeat failed: {payload}",
+                )
+            else:
+                update_agent_status(
+                    enabled=True,
+                    running=True,
+                    state="Running",
+                    last_heartbeat=format_local_time(),
+                    last_error="",
+                )
+
+            now = time.time()
+            if now - last_report >= report_every:
+                status, payload = send_report(config, state, period="daily")
+                if 200 <= status < 400:
+                    state["last_report_ts"] = now
+                    write_json(config.get("state_path", str(DEFAULT_STATE)), state)
+                    last_report = now
+                    update_agent_status(last_report=format_local_time())
+                else:
+                    update_agent_status(last_error=f"Report failed: {payload}")
+        except Exception as exc:
+            update_agent_status(enabled=True, running=True, state="Runtime error", last_error=str(exc))
+
+        next_heartbeat = time.time() + interval
+
+
 def background_update_monitor(config_path):
     time.sleep(20)
     while True:
@@ -571,9 +688,179 @@ def background_update_monitor(config_path):
         time.sleep(max(900, UPDATE_CHECK_INTERVAL_SECONDS))
 
 
+def check_updates_now(config_path, *, show_up_to_date=True):
+    def worker():
+        try:
+            update_info = fetch_latest_update()
+        except Exception as exc:
+            show_update_message("CCBot update check failed", f"Could not check for updates.\n\n{exc}", kind="error")
+            return
+
+        if update_info:
+            prompt_background_update(update_info, config_path)
+        elif show_up_to_date:
+            show_update_message("CCBot is up to date", f"You are already using {display_version(__version__)}.")
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def agent_status_lines():
+    status = get_agent_status()
+    bot_status = "Active" if status["enabled"] else "Paused"
+    process_status = "Running" if status["running"] else "Not running"
+    return [
+        ("Version", display_version(__version__)),
+        ("Bot status", bot_status),
+        ("Background process", process_status),
+        ("Current state", status.get("state") or "Unknown"),
+        ("Last heartbeat", status.get("last_heartbeat") or "Waiting"),
+        ("Last report", status.get("last_report") or "Waiting"),
+        ("Update check", f"Every {UPDATE_CHECK_INTERVAL_SECONDS // 3600} hours"),
+        ("Computer", socket.gethostname()),
+        ("Operating system", platform.platform()),
+        ("Install path", str(APP_DIR)),
+        ("Last error", status.get("last_error") or "None"),
+    ]
+
+
+def show_agent_status_window(config_path):
+    root = tk.Tk()
+    root.title("CCBot Agent status")
+    configure_window_identity(root)
+    root.geometry("620x430")
+    root.resizable(False, False)
+
+    frame = ttk.Frame(root, padding=22)
+    frame.pack(fill="both", expand=True)
+    ttk.Label(frame, text="CCBot Agent", font=("Segoe UI", 16, "bold")).pack(anchor="w")
+    ttk.Label(frame, text="Local monitoring status and controls", wraplength=560).pack(anchor="w", pady=(4, 16))
+
+    table = ttk.Frame(frame)
+    table.pack(fill="both", expand=True)
+
+    value_labels = {}
+
+    def render_rows():
+        for widget in table.winfo_children():
+            widget.destroy()
+        value_labels.clear()
+        for row_index, (label, value) in enumerate(agent_status_lines()):
+            ttk.Label(table, text=label, width=18).grid(row=row_index, column=0, sticky="nw", pady=3)
+            value_label = ttk.Label(table, text=value, wraplength=390)
+            value_label.grid(row=row_index, column=1, sticky="nw", pady=3)
+            value_labels[label] = value_label
+
+    def refresh_rows():
+        for label, value in agent_status_lines():
+            if label in value_labels:
+                value_labels[label].configure(text=value)
+        root.after(5000, refresh_rows)
+
+    def toggle_agent():
+        set_agent_enabled(not is_agent_enabled())
+        refresh_rows()
+        toggle_button.configure(text="Pause CCBot" if is_agent_enabled() else "Resume CCBot")
+
+    render_rows()
+    refresh_rows()
+
+    buttons = ttk.Frame(frame)
+    buttons.pack(fill="x", pady=(16, 0))
+    toggle_button = ttk.Button(buttons, text="Pause CCBot" if is_agent_enabled() else "Resume CCBot", command=toggle_agent)
+    toggle_button.pack(side="left")
+    ttk.Button(buttons, text="Check for updates now", command=lambda: check_updates_now(config_path)).pack(side="left", padx=(8, 0))
+    ttk.Button(buttons, text="Close", command=root.destroy).pack(side="right")
+
+    root.mainloop()
+
+
+def load_tray_image():
+    from PIL import Image, ImageDraw
+
+    image_path = resource_path("assets/ccbot.png")
+    try:
+        if image_path.exists():
+            return Image.open(image_path).convert("RGBA").resize((64, 64))
+    except Exception:
+        pass
+
+    image = Image.new("RGBA", (64, 64), (5, 12, 22, 255))
+    draw = ImageDraw.Draw(image)
+    draw.ellipse((8, 8, 56, 56), fill=(34, 211, 238, 255))
+    draw.text((21, 22), "CC", fill=(5, 12, 22, 255))
+    return image
+
+
+def tray_title():
+    status = "Active" if is_agent_enabled() else "Paused"
+    return f"CCBot Agent {display_version(__version__)} - {status}"
+
+
+def run_tray_icon(config_path):
+    import pystray
+
+    def menu_version(_item):
+        return f"Version: {display_version(__version__)}"
+
+    def menu_status(_item):
+        status = get_agent_status()
+        bot_status = "Active" if status["enabled"] else "Paused"
+        return f"Bot: {bot_status} / {status.get('state') or 'Unknown'}"
+
+    def toggle_text(_item):
+        return "Pause CCBot" if is_agent_enabled() else "Resume CCBot"
+
+    def toggle_agent(icon, _item):
+        set_agent_enabled(not is_agent_enabled())
+        icon.title = tray_title()
+        icon.update_menu()
+        try:
+            icon.notify("CCBot is active." if is_agent_enabled() else "CCBot is paused.", "CCBot Agent")
+        except Exception:
+            pass
+
+    def check_update(_icon, _item):
+        check_updates_now(config_path)
+
+    def open_status(_icon, _item):
+        threading.Thread(target=lambda: show_agent_status_window(config_path), daemon=True).start()
+
+    menu = pystray.Menu(
+        pystray.MenuItem(menu_version, None, enabled=False),
+        pystray.MenuItem(menu_status, None, enabled=False),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Open status", open_status, default=True),
+        pystray.MenuItem("Check for updates now", check_update),
+        pystray.MenuItem(toggle_text, toggle_agent, checked=lambda _item: is_agent_enabled()),
+    )
+    icon = pystray.Icon("ccbot-agent", load_tray_image(), title=tray_title(), menu=menu)
+
+    def refresh_icon():
+        while True:
+            try:
+                icon.title = tray_title()
+                icon.update_menu()
+            except Exception:
+                return
+            time.sleep(30)
+
+    icon.run(setup=lambda _icon: threading.Thread(target=refresh_icon, daemon=True).start())
+
+
 def run_agent_with_update_monitor(config_path):
+    if not sys.platform.startswith("win"):
+        run_controlled_agent_loop(config_path)
+        return
+
+    update_agent_status(enabled=is_agent_enabled(), running=True, state="Starting")
+    threading.Thread(target=lambda: run_controlled_agent_loop(config_path), daemon=True).start()
     threading.Thread(target=lambda: background_update_monitor(config_path), daemon=True).start()
-    run_loop(config_path)
+    try:
+        run_tray_icon(config_path)
+    except Exception as exc:
+        update_agent_status(last_error=f"Tray icon unavailable: {exc}")
+        while True:
+            time.sleep(3600)
 
 
 def install(platform_url, enrollment_token, status_callback, progress_callback, log_callback):
