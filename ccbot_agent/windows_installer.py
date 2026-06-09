@@ -25,11 +25,14 @@ UPDATE_MANIFEST_URL = os.environ.get(
     "CCBOT_UPDATE_MANIFEST_URL",
     "https://cybercareai.io/static/downloads/ccbot-agent-latest.json",
 )
+UPDATE_CHECK_INTERVAL_SECONDS = int(os.environ.get("CCBOT_UPDATE_CHECK_INTERVAL_SECONDS", "21600"))
+UPDATE_PROMPT_COOLDOWN_SECONDS = int(os.environ.get("CCBOT_UPDATE_PROMPT_COOLDOWN_SECONDS", "86400"))
 PROGRAM_DATA = Path(os.environ.get("ProgramData", r"C:\ProgramData"))
 APP_DIR = PROGRAM_DATA / "CCBotAgent"
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
 UPDATE_DIR = APP_DIR / "updates"
+UPDATE_STATE_PATH = APP_DIR / "update-state.json"
 TASK_NAME = "CCBot Agent"
 RUN_KEY_PATH = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
 UPDATE_MANIFEST_HOSTS = {"cybercareai.io", "www.cybercareai.io"}
@@ -114,6 +117,42 @@ def is_enrollment_token_error(message):
             "revoked",
         )
     )
+
+
+def read_update_state():
+    try:
+        return json.loads(UPDATE_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def write_update_state(update_info, status):
+    try:
+        APP_DIR.mkdir(parents=True, exist_ok=True)
+        UPDATE_STATE_PATH.write_text(
+            json.dumps(
+                {
+                    "version": display_version(update_info.get("version")),
+                    "status": status,
+                    "updated_at": time.time(),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def should_prompt_for_update(update_info):
+    state = read_update_state()
+    if state.get("version") != display_version(update_info.get("version")):
+        return True
+    try:
+        updated_at = float(state.get("updated_at", 0))
+    except (TypeError, ValueError):
+        return True
+    return time.time() - updated_at >= UPDATE_PROMPT_COOLDOWN_SECONDS
 
 
 def validate_update_url(url, allowed_hosts):
@@ -405,6 +444,21 @@ def show_update_message(title, message, kind="info"):
         root.destroy()
 
 
+def launch_update_helper(installer_path, config_path):
+    subprocess.Popen(
+        [
+            str(installer_path),
+            "--apply-update",
+            "--config",
+            str(config_path),
+            "--parent-pid",
+            str(os.getpid()),
+        ],
+        cwd=str(Path(installer_path).parent),
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+
 def apply_self_update(config_path, parent_pid=0):
     target = APP_DIR / "CCBot-Windows-Installer.exe"
     try:
@@ -430,6 +484,96 @@ def apply_self_update(config_path, parent_pid=0):
             error_text = f"{error_text}\n\nSaved log file:\n{log_path}"
         show_update_message("CCBot update failed", error_text, kind="error")
         return 1
+
+
+def show_background_update_progress(update_info, config_path):
+    root = tk.Tk()
+    root.title("CCBot update")
+    configure_window_identity(root)
+    root.geometry("520x170")
+    root.resizable(False, False)
+
+    frame = ttk.Frame(root, padding=20)
+    frame.pack(fill="both", expand=True)
+    ttk.Label(frame, text=f"Updating CCBot Agent to {update_info['display_version']}", font=("Segoe UI", 13, "bold")).pack(anchor="w")
+    status_var = tk.StringVar(value="Preparing update...")
+    ttk.Label(frame, textvariable=status_var, wraplength=470).pack(anchor="w", pady=(8, 12))
+    progress_var = tk.IntVar(value=0)
+    ttk.Progressbar(frame, maximum=100, variable=progress_var).pack(fill="x")
+
+    def set_status(message):
+        root.after(0, lambda: status_var.set(message))
+
+    def set_progress(value):
+        root.after(0, lambda: progress_var.set(value))
+
+    def log_message(_message):
+        return None
+
+    def worker():
+        try:
+            installer_path = download_update_installer(update_info, set_status, set_progress, log_message)
+            write_update_state(update_info, "installing")
+            set_status("Restarting CCBot with the new version...")
+            launch_update_helper(installer_path, config_path)
+            root.after(800, lambda: (root.destroy(), os._exit(0)))
+        except BaseException as exc:
+            message = str(exc) or exc.__class__.__name__
+            write_update_state(update_info, "failed")
+            error_text = f"Update failed: {message}\n\nTraceback:\n{traceback.format_exc()}"
+            write_failure_log(error_text)
+
+            def show_failure():
+                root.destroy()
+                show_update_message(
+                    "CCBot update failed",
+                    "CCBot could not finish the update. You can open the CCBot installer and try again.",
+                    kind="error",
+                )
+
+            root.after(0, show_failure)
+
+    threading.Thread(target=worker, daemon=True).start()
+    root.mainloop()
+
+
+def prompt_background_update(update_info, config_path):
+    root = tk.Tk()
+    root.withdraw()
+    configure_window_identity(root)
+    try:
+        accepted = messagebox.askokcancel(
+            "CCBot update available",
+            (
+                f"CCBot Agent {update_info['display_version']} is available.\n"
+                f"Your current version is {display_version(__version__)}.\n\n"
+                "Click OK to download and update now."
+            ),
+            parent=root,
+        )
+    finally:
+        root.destroy()
+
+    write_update_state(update_info, "accepted" if accepted else "dismissed")
+    if accepted:
+        show_background_update_progress(update_info, config_path)
+
+
+def background_update_monitor(config_path):
+    time.sleep(20)
+    while True:
+        try:
+            update_info = fetch_latest_update()
+            if update_info and should_prompt_for_update(update_info):
+                prompt_background_update(update_info, config_path)
+        except Exception:
+            pass
+        time.sleep(max(900, UPDATE_CHECK_INTERVAL_SECONDS))
+
+
+def run_agent_with_update_monitor(config_path):
+    threading.Thread(target=lambda: background_update_monitor(config_path), daemon=True).start()
+    run_loop(config_path)
 
 
 def install(platform_url, enrollment_token, status_callback, progress_callback, log_callback):
@@ -717,20 +861,6 @@ def launch_gui():
         platform_entry.configure(state=state)
         token_entry.configure(state=state)
 
-    def launch_downloaded_update(installer_path):
-        subprocess.Popen(
-            [
-                str(installer_path),
-                "--apply-update",
-                "--config",
-                str(CONFIG_PATH),
-                "--parent-pid",
-                str(os.getpid()),
-            ],
-            cwd=str(installer_path.parent),
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-
     def run_update(update_info):
         root.after(0, lambda: set_inputs_state("disabled"))
         root.after(0, lambda: install_button.configure(state="disabled"))
@@ -740,7 +870,7 @@ def launch_gui():
             installer_path = download_update_installer(update_info, set_status, set_progress, append_log)
             set_status("Launching the updated CCBot installer...")
             append_log("Starting the self-update helper.")
-            launch_downloaded_update(installer_path)
+            launch_update_helper(installer_path, CONFIG_PATH)
             root.after(350, root.destroy)
         except BaseException as exc:
             message = str(exc) or exc.__class__.__name__
@@ -880,7 +1010,7 @@ def main(argv=None):
     if args.apply_update:
         raise SystemExit(apply_self_update(args.config, parent_pid=args.parent_pid))
     elif args.agent_run:
-        run_loop(args.config)
+        run_agent_with_update_monitor(args.config)
     else:
         launch_gui()
 

@@ -6,6 +6,18 @@ The project follows semantic versioning.
 
 ## Unreleased
 
+## 0.1.12 - 2026-06-09
+
+### Added
+
+- Windows background agent now checks the CyberCare AI update manifest while it
+  is running and prompts the user when a newer release is available.
+- Added a small background update progress window so user-approved updates can
+  download, replace the installed executable, and restart CCBot without opening
+  the installer manually.
+- Added update prompt cooldown state to avoid repeatedly asking the user about
+  the same release.
+
 ## 0.1.11 - 2026-06-09
 
 ### Changed
