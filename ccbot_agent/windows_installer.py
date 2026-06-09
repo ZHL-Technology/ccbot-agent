@@ -1,26 +1,45 @@
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import threading
+import time
 import traceback
 import tkinter as tk
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
+from ccbot_agent import __version__
 from ccbot_agent.main import enroll, run_loop
 
 
 APP_NAME = "CCBot Agent"
 DEFAULT_PLATFORM_URL = "https://cybercareai.io"
+UPDATE_MANIFEST_URL = os.environ.get(
+    "CCBOT_UPDATE_MANIFEST_URL",
+    "https://cybercareai.io/static/downloads/ccbot-agent-latest.json",
+)
 PROGRAM_DATA = Path(os.environ.get("ProgramData", r"C:\ProgramData"))
 APP_DIR = PROGRAM_DATA / "CCBotAgent"
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
+UPDATE_DIR = APP_DIR / "updates"
 TASK_NAME = "CCBot Agent"
 RUN_KEY_PATH = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
+UPDATE_MANIFEST_HOSTS = {"cybercareai.io", "www.cybercareai.io"}
+UPDATE_DOWNLOAD_HOSTS = {
+    "cybercareai.io",
+    "www.cybercareai.io",
+    "github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+}
 
 TERMS_TEXT = """CCBot Agent will enroll this Windows device with CyberCare AI and start continuous monitoring for security hygiene and system health signals.
 
@@ -65,6 +84,115 @@ def configure_window_identity(root):
         pass
 
 
+def display_version(version):
+    value = str(version or "").strip()
+    return value if value.lower().startswith("v") else f"v{value}"
+
+
+def parse_version(value):
+    numbers = [int(part) for part in re.findall(r"\d+", str(value or ""))[:3]]
+    while len(numbers) < 3:
+        numbers.append(0)
+    return tuple(numbers)
+
+
+def is_newer_version(latest_version, current_version=__version__):
+    return parse_version(latest_version) > parse_version(current_version)
+
+
+def validate_update_url(url, allowed_hosts):
+    parsed = urllib.parse.urlparse(str(url or "").strip())
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or hostname not in allowed_hosts:
+        raise ValueError(f"Unsupported update URL: {url}")
+    return parsed.geturl()
+
+
+def update_request(url):
+    return urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json, application/octet-stream;q=0.9, */*;q=0.8",
+            "User-Agent": f"CCBot-Windows-Installer/{__version__} (+https://cybercareai.io)",
+        },
+    )
+
+
+def fetch_latest_update():
+    manifest_url = validate_update_url(UPDATE_MANIFEST_URL, UPDATE_MANIFEST_HOSTS)
+    try:
+        with urllib.request.urlopen(update_request(manifest_url), timeout=20) as response:
+            payload = json.loads(response.read(128 * 1024).decode("utf-8") or "{}")
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Could not check for updates: {exc}") from exc
+
+    latest_version = str(payload.get("version") or payload.get("tag") or "").strip().lstrip("vV")
+    download_url = str(payload.get("windows_installer_url") or payload.get("download_url") or "").strip()
+    release_notes_url = str(payload.get("release_notes_url") or "").strip()
+    if not latest_version or not download_url:
+        raise RuntimeError("The update manifest is missing version or Windows installer URL.")
+
+    download_url = validate_update_url(download_url, UPDATE_DOWNLOAD_HOSTS)
+    if release_notes_url:
+        release_notes_url = validate_update_url(release_notes_url, UPDATE_DOWNLOAD_HOSTS)
+
+    if not is_newer_version(latest_version):
+        return None
+
+    return {
+        "version": latest_version,
+        "display_version": display_version(latest_version),
+        "download_url": download_url,
+        "release_notes_url": release_notes_url,
+        "notes": str(payload.get("notes") or "").strip(),
+    }
+
+
+def download_update_installer(update_info, status_callback, progress_callback, log_callback):
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    UPDATE_DIR.mkdir(parents=True, exist_ok=True)
+    version_label = display_version(update_info["version"])
+    target = UPDATE_DIR / f"CCBot-Windows-Installer-{version_label}.exe"
+    temporary = target.with_suffix(".download")
+
+    status_callback(f"Downloading CCBot Agent {version_label}...")
+    log_callback(f"Downloading update from {update_info['download_url']}")
+    progress_callback(4)
+
+    try:
+        with urllib.request.urlopen(update_request(update_info["download_url"]), timeout=120) as response:
+            validate_update_url(response.geturl(), UPDATE_DOWNLOAD_HOSTS)
+            total = int(response.headers.get("Content-Length") or 0)
+            downloaded = 0
+            with temporary.open("wb") as handle:
+                while True:
+                    chunk = response.read(256 * 1024)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+                    downloaded += len(chunk)
+                    if total:
+                        progress_callback(min(92, 8 + int((downloaded / total) * 84)))
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        raise RuntimeError(f"Could not download the update: {exc}") from exc
+
+    if temporary.stat().st_size < 1024 * 1024:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        raise RuntimeError("The downloaded update file is unexpectedly small.")
+
+    temporary.replace(target)
+    progress_callback(96)
+    log_callback(f"Update downloaded to {target}")
+    return target
+
+
 def write_config(platform_url, enrollment_token):
     APP_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(
@@ -82,11 +210,81 @@ def write_config(platform_url, enrollment_token):
     )
 
 
+def run_hidden(command, **kwargs):
+    kwargs.setdefault("check", False)
+    kwargs.setdefault("stdout", subprocess.PIPE)
+    kwargs.setdefault("stderr", subprocess.PIPE)
+    kwargs.setdefault("text", True)
+    if sys.platform.startswith("win"):
+        kwargs.setdefault("creationflags", getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    return subprocess.run(command, **kwargs)
+
+
+def wait_for_pid_exit(pid, timeout=20):
+    if not pid or not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes
+
+        synchronize = 0x00100000
+        handle = ctypes.windll.kernel32.OpenProcess(synchronize, False, int(pid))
+        if handle:
+            try:
+                ctypes.windll.kernel32.WaitForSingleObject(handle, int(timeout * 1000))
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)
+    except Exception:
+        time.sleep(min(timeout, 2))
+
+
+def stop_existing_agent_processes(target):
+    if not sys.platform.startswith("win"):
+        return
+    run_hidden(["schtasks", "/End", "/TN", TASK_NAME], timeout=10)
+    target_text = str(target.resolve()).replace("'", "''")
+    current_pid = os.getpid()
+    script = (
+        f"$target = '{target_text}'; "
+        f"$currentPid = {current_pid}; "
+        "Get-CimInstance Win32_Process | "
+        "Where-Object { $_.ExecutablePath -and "
+        "(([System.IO.Path]::GetFullPath($_.ExecutablePath)) -ieq $target) -and "
+        "($_.ProcessId -ne $currentPid) } | "
+        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
+    )
+    try:
+        run_hidden(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            timeout=15,
+        )
+    except FileNotFoundError:
+        pass
+    time.sleep(1)
+
+
+def copy_executable_with_retries(source, target, attempts=12):
+    source = Path(source).resolve()
+    target = Path(target).resolve()
+    if source == target:
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    last_error = None
+    for _attempt in range(attempts):
+        try:
+            shutil.copy2(source, target)
+            return
+        except OSError as exc:
+            last_error = exc
+            time.sleep(1)
+    raise RuntimeError(f"Could not replace the installed CCBot executable: {last_error}") from last_error
+
+
 def current_executable_target():
     if getattr(sys, "frozen", False):
         target = APP_DIR / "CCBot-Windows-Installer.exe"
         if Path(sys.executable).resolve() != target.resolve():
-            shutil.copy2(sys.executable, target)
+            stop_existing_agent_processes(target)
+            copy_executable_with_retries(sys.executable, target)
         return target
     return Path(sys.executable)
 
@@ -178,6 +376,46 @@ def write_failure_log(error_text):
         return None
 
 
+def show_update_message(title, message, kind="info"):
+    root = tk.Tk()
+    root.withdraw()
+    configure_window_identity(root)
+    try:
+        if kind == "error":
+            messagebox.showerror(title, message, parent=root)
+        else:
+            messagebox.showinfo(title, message, parent=root)
+    finally:
+        root.destroy()
+
+
+def apply_self_update(config_path, parent_pid=0):
+    target = APP_DIR / "CCBot-Windows-Installer.exe"
+    try:
+        wait_for_pid_exit(parent_pid)
+        stop_existing_agent_processes(target)
+        copy_executable_with_retries(sys.executable, target)
+        startup_method = create_startup_entry(target)
+        if Path(config_path).exists():
+            start_agent(target)
+        show_update_message(
+            "CCBot update complete",
+            (
+                f"CCBot Agent {display_version(__version__)} has been installed.\n\n"
+                f"Startup method: {startup_method}"
+            ),
+        )
+        return 0
+    except BaseException as exc:
+        message = str(exc) or exc.__class__.__name__
+        error_text = f"Update failed: {message}\n\nTraceback:\n{traceback.format_exc()}"
+        log_path = write_failure_log(error_text)
+        if log_path:
+            error_text = f"{error_text}\n\nSaved log file:\n{log_path}"
+        show_update_message("CCBot update failed", error_text, kind="error")
+        return 1
+
+
 def install(platform_url, enrollment_token, status_callback, progress_callback, log_callback):
     if not enrollment_token.strip():
         raise ValueError("Paste the one-time install token from CyberCare AI.")
@@ -215,18 +453,27 @@ def launch_gui():
     root = tk.Tk()
     root.title(APP_NAME)
     configure_window_identity(root)
-    root.geometry("760x760")
+    root.geometry("760x790")
     root.resizable(False, False)
 
     frame = ttk.Frame(root, padding=24)
     frame.pack(fill="both", expand=True)
 
-    ttk.Label(frame, text="Install CCBot for Windows", font=("Segoe UI", 16, "bold")).pack(anchor="w")
+    header = ttk.Frame(frame)
+    header.pack(fill="x")
+    header_copy = ttk.Frame(header)
+    header_copy.pack(side="left", fill="x", expand=True)
+    ttk.Label(header_copy, text="Install CCBot for Windows", font=("Segoe UI", 16, "bold")).pack(anchor="w")
+    ttk.Label(header_copy, text=f"Current version: {display_version(__version__)}").pack(anchor="w", pady=(4, 0))
+    update_header = ttk.Frame(header)
+    update_header.pack(side="right", anchor="ne")
+    check_update_button = ttk.Button(update_header, text="Check for updates", width=18)
+    check_update_button.pack(anchor="e")
     ttk.Label(
         frame,
         text="Paste the one-time install token from CyberCare AI. The installer will enroll this device and start monitoring.",
-        wraplength=460,
-    ).pack(anchor="w", pady=(8, 18))
+        wraplength=620,
+    ).pack(anchor="w", pady=(10, 18))
 
     ttk.Label(frame, text="Platform URL").pack(anchor="w")
     platform_var = tk.StringVar(value=DEFAULT_PLATFORM_URL)
@@ -450,6 +697,96 @@ def launch_gui():
         platform_entry.configure(state=state)
         token_entry.configure(state=state)
 
+    def launch_downloaded_update(installer_path):
+        subprocess.Popen(
+            [
+                str(installer_path),
+                "--apply-update",
+                "--config",
+                str(CONFIG_PATH),
+                "--parent-pid",
+                str(os.getpid()),
+            ],
+            cwd=str(installer_path.parent),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+
+    def run_update(update_info):
+        root.after(0, lambda: set_inputs_state("disabled"))
+        root.after(0, lambda: install_button.configure(state="disabled"))
+        root.after(0, lambda: check_update_button.configure(state="disabled"))
+        set_progress(0)
+        try:
+            installer_path = download_update_installer(update_info, set_status, set_progress, append_log)
+            set_status("Launching the updated CCBot installer...")
+            append_log("Starting the self-update helper.")
+            launch_downloaded_update(installer_path)
+            root.after(350, root.destroy)
+        except BaseException as exc:
+            message = str(exc) or exc.__class__.__name__
+            error_text = f"{message}\n\nInstaller log:\n{current_log_text()}\n\nTraceback:\n{traceback.format_exc()}"
+            log_path = write_failure_log(error_text)
+            if log_path:
+                error_text = f"{error_text}\n\nSaved log file:\n{log_path}"
+            set_status("Update failed. Review the error, then try again.")
+            set_progress(0)
+            append_log(f"UPDATE ERROR: {message}")
+            root.after(0, lambda: show_error_dialog(error_text))
+            root.after(0, lambda: set_inputs_state("normal"))
+            root.after(0, refresh_install_button)
+            root.after(0, lambda: check_update_button.configure(state="normal"))
+
+    def prompt_for_update(update_info):
+        notes = f"\n\n{update_info['notes']}" if update_info.get("notes") else ""
+        if messagebox.askokcancel(
+            "CCBot update available",
+            (
+                f"CCBot Agent {update_info['display_version']} is available.\n"
+                f"Your current version is {display_version(__version__)}.\n\n"
+                "Click OK to download and update now."
+                f"{notes}"
+            ),
+            parent=root,
+        ):
+            threading.Thread(target=lambda: run_update(update_info), daemon=True).start()
+
+    def check_for_updates(show_latest_message=True):
+        def worker():
+            root.after(0, lambda: check_update_button.configure(state="disabled"))
+            try:
+                update_info = fetch_latest_update()
+            except BaseException as exc:
+                message = str(exc) or exc.__class__.__name__
+                append_log(f"Update check failed: {message}")
+                if show_latest_message:
+                    root.after(
+                        0,
+                        lambda: messagebox.showerror(
+                            "CCBot update check failed",
+                            f"Could not check for updates.\n\n{message}",
+                            parent=root,
+                        ),
+                    )
+            else:
+                if update_info:
+                    append_log(f"Update available: {update_info['display_version']}")
+                    root.after(0, lambda: prompt_for_update(update_info))
+                elif show_latest_message:
+                    root.after(
+                        0,
+                        lambda: messagebox.showinfo(
+                            "CCBot is up to date",
+                            f"You are already using {display_version(__version__)}.",
+                            parent=root,
+                        ),
+                    )
+            finally:
+                root.after(0, lambda: check_update_button.configure(state="normal"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    check_update_button.configure(command=lambda: check_for_updates(show_latest_message=True))
+
     def finish():
         root.destroy()
 
@@ -473,15 +810,20 @@ def launch_gui():
             root.after(0, lambda: install_button.configure(text="Finish", state="normal", command=finish))
 
     install_button.configure(command=lambda: threading.Thread(target=run_install, daemon=True).start())
+    root.after(900, lambda: check_for_updates(show_latest_message=False))
     root.mainloop()
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="CCBot Windows Installer")
     parser.add_argument("--agent-run", action="store_true")
+    parser.add_argument("--apply-update", action="store_true")
     parser.add_argument("--config", default=str(CONFIG_PATH))
+    parser.add_argument("--parent-pid", type=int, default=0)
     args = parser.parse_args(argv)
-    if args.agent_run:
+    if args.apply_update:
+        raise SystemExit(apply_self_update(args.config, parent_pid=args.parent_pid))
+    elif args.agent_run:
         run_loop(args.config)
     else:
         launch_gui()

@@ -6,6 +6,17 @@ The project follows semantic versioning.
 
 ## Unreleased
 
+## 0.1.10 - 2026-06-09
+
+### Added
+
+- Windows installer now displays the installed CCBot Agent version in the app.
+- Windows installer now checks the CyberCare AI update manifest for newer
+  releases and prompts the user before downloading an update.
+- Added a self-update path for Windows that replaces the installed executable,
+  refreshes startup registration, and restarts the background agent without
+  asking for a new enrollment token.
+
 ## 0.1.9 - 2026-06-05
 
 ### Added
