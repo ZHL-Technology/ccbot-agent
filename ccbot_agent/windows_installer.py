@@ -975,7 +975,8 @@ def run_tray_icon(config_path):
     icon = pystray.Icon("ccbot-agent", load_tray_image(), title=tray_title(), menu=menu)
 
     def setup_icon(active_icon):
-        write_runtime_log("Tray icon started.")
+        active_icon.visible = True
+        write_runtime_log("Tray icon started and set visible.")
         threading.Thread(target=refresh_icon, daemon=True).start()
         try:
             active_icon.notify(

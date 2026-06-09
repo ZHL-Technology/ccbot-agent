@@ -6,6 +6,14 @@ The project follows semantic versioning.
 
 ## Unreleased
 
+## 0.1.17 - 2026-06-09
+
+### Fixed
+
+- Explicitly marks the Windows tray icon as visible during pystray setup. This
+  fixes cases where the tray setup ran and logged successfully, but Windows did
+  not display the notification-area icon.
+
 ## 0.1.16 - 2026-06-09
 
 ### Changed
