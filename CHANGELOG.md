@@ -6,6 +6,17 @@ The project follows semantic versioning.
 
 ## Unreleased
 
+## 0.1.15 - 2026-06-09
+
+### Changed
+
+- Windows startup registration now prefers the current-user Run key so the tray
+  icon starts inside the signed-in user's desktop session.
+- The installer removes the older scheduled-task startup registration when the
+  current-user tray startup is available.
+- Added runtime logging and a visible fallback message when Windows blocks the
+  CCBot tray icon from starting.
+
 ## 0.1.14 - 2026-06-09
 
 ### Added

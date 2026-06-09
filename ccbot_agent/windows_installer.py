@@ -36,6 +36,7 @@ STATE_PATH = APP_DIR / "state.json"
 UPDATE_DIR = APP_DIR / "updates"
 UPDATE_STATE_PATH = APP_DIR / "update-state.json"
 AGENT_CONTROL_PATH = APP_DIR / "agent-control.json"
+RUNTIME_LOG_PATH = APP_DIR / "runtime.log"
 TASK_NAME = "CCBot Agent"
 RUN_KEY_PATH = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
 UPDATE_MANIFEST_HOSTS = {"cybercareai.io", "www.cybercareai.io"}
@@ -143,6 +144,15 @@ def write_update_state(update_info, status):
             ),
             encoding="utf-8",
         )
+    except OSError:
+        pass
+
+
+def write_runtime_log(message):
+    try:
+        APP_DIR.mkdir(parents=True, exist_ok=True)
+        with RUNTIME_LOG_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(f"{format_local_time()} {message}\n")
     except OSError:
         pass
 
@@ -448,20 +458,33 @@ def create_current_user_run_key(command):
     raise RuntimeError(detail)
 
 
+def delete_scheduled_task():
+    subprocess.run(
+        ["schtasks", "/Delete", "/TN", TASK_NAME, "/F"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+
 def create_startup_entry(executable):
     command = quoted_agent_command(executable)
     try:
-        return create_scheduled_task(command)
-    except RuntimeError as scheduled_task_error:
+        method = create_current_user_run_key(command)
+        delete_scheduled_task()
+        return method
+    except RuntimeError as run_key_error:
         try:
-            method = create_current_user_run_key(command)
-        except RuntimeError as run_key_error:
+            method = create_scheduled_task(command)
+        except RuntimeError as scheduled_task_error:
             raise RuntimeError(
                 "Could not register CCBot to start with Windows. "
-                f"Scheduled task error: {scheduled_task_error}. "
-                f"Current-user startup error: {run_key_error}."
-            ) from run_key_error
-        return f"{method} (scheduled task was blocked: {scheduled_task_error})"
+                f"Current-user startup error: {run_key_error}. "
+                f"Scheduled task error: {scheduled_task_error}."
+            ) from scheduled_task_error
+        return f"{method} (current-user startup was blocked: {run_key_error})"
 
 
 def start_agent(executable):
@@ -807,6 +830,9 @@ def run_tray_icon(config_path):
         bot_status = "Active" if status["enabled"] else "Paused"
         return f"Bot: {bot_status} / {status.get('state') or 'Unknown'}"
 
+    def noop(_icon, _item):
+        return None
+
     def toggle_text(_item):
         return "Pause CCBot" if is_agent_enabled() else "Resume CCBot"
 
@@ -826,14 +852,25 @@ def run_tray_icon(config_path):
         threading.Thread(target=lambda: show_agent_status_window(config_path), daemon=True).start()
 
     menu = pystray.Menu(
-        pystray.MenuItem(menu_version, None, enabled=False),
-        pystray.MenuItem(menu_status, None, enabled=False),
+        pystray.MenuItem(menu_version, noop, enabled=False),
+        pystray.MenuItem(menu_status, noop, enabled=False),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Open status", open_status, default=True),
         pystray.MenuItem("Check for updates now", check_update),
         pystray.MenuItem(toggle_text, toggle_agent, checked=lambda _item: is_agent_enabled()),
     )
     icon = pystray.Icon("ccbot-agent", load_tray_image(), title=tray_title(), menu=menu)
+
+    def setup_icon(active_icon):
+        write_runtime_log("Tray icon started.")
+        threading.Thread(target=refresh_icon, daemon=True).start()
+        try:
+            active_icon.notify(
+                "CCBot is running. Right-click the tray icon to open status, check updates, or pause monitoring.",
+                "CCBot Agent",
+            )
+        except Exception as exc:
+            write_runtime_log(f"Tray notification unavailable: {exc}")
 
     def refresh_icon():
         while True:
@@ -844,7 +881,7 @@ def run_tray_icon(config_path):
                 return
             time.sleep(30)
 
-    icon.run(setup=lambda _icon: threading.Thread(target=refresh_icon, daemon=True).start())
+    icon.run(setup=setup_icon)
 
 
 def run_agent_with_update_monitor(config_path):
@@ -858,7 +895,16 @@ def run_agent_with_update_monitor(config_path):
     try:
         run_tray_icon(config_path)
     except Exception as exc:
+        write_runtime_log(f"Tray icon failed: {exc}")
         update_agent_status(last_error=f"Tray icon unavailable: {exc}")
+        show_update_message(
+            "CCBot tray icon could not start",
+            (
+                "CCBot is still running in the background, but Windows did not allow the tray icon to start.\n\n"
+                f"Details were saved to {RUNTIME_LOG_PATH}."
+            ),
+            kind="error",
+        )
         while True:
             time.sleep(3600)
 
