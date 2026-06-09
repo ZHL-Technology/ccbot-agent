@@ -6,6 +6,17 @@ The project follows semantic versioning.
 
 ## Unreleased
 
+## 0.1.11 - 2026-06-09
+
+### Changed
+
+- Windows installer now shows a friendly retry dialog when the enrollment token
+  is invalid, expired, already used, or revoked.
+- Invalid-token failures now clear the token field and return the user to the
+  installer instead of forcing them to exit.
+- Technical traceback details are hidden for token failures and kept only for
+  support-oriented installation or update errors.
+
 ## 0.1.10 - 2026-06-09
 
 ### Added

@@ -100,6 +100,22 @@ def is_newer_version(latest_version, current_version=__version__):
     return parse_version(latest_version) > parse_version(current_version)
 
 
+def is_enrollment_token_error(message):
+    text = str(message or "").lower()
+    return any(
+        marker in text
+        for marker in (
+            "invalid_token",
+            "token is invalid",
+            "token is expired",
+            "token has expired",
+            "expired",
+            "used",
+            "revoked",
+        )
+    )
+
+
 def validate_update_url(url, allowed_hosts):
     parsed = urllib.parse.urlparse(str(url or "").strip())
     hostname = (parsed.hostname or "").lower()
@@ -614,50 +630,54 @@ def launch_gui():
     def current_log_text():
         return "\n".join(log_messages).strip()
 
-    def show_error_dialog(error_text):
+    def show_error_dialog(title, message, *, technical_details=""):
         dialog = tk.Toplevel(root)
-        dialog.title("CCBot installation failed")
+        dialog.title(title)
         configure_window_identity(dialog)
-        dialog.geometry("660x430")
+        dialog.geometry("660x260" if not technical_details else "660x430")
         dialog.resizable(False, False)
         dialog.transient(root)
         dialog.grab_set()
 
         body = ttk.Frame(dialog, padding=20)
         body.pack(fill="both", expand=True)
-        ttk.Label(body, text="Installation failed", font=("Segoe UI", 14, "bold")).pack(anchor="w")
+        ttk.Label(body, text=title, font=("Segoe UI", 14, "bold")).pack(anchor="w")
         ttk.Label(
             body,
-            text="CCBot could not finish installation. Copy the exact error below before closing this installer.",
+            text=message,
             wraplength=600,
         ).pack(anchor="w", pady=(6, 12))
 
-        error_frame = ttk.Frame(body)
-        error_frame.pack(fill="both", expand=True)
-        error_scrollbar = ttk.Scrollbar(error_frame, orient="vertical")
-        error_box = tk.Text(
-            error_frame,
-            height=12,
-            wrap="word",
-            relief="solid",
-            borderwidth=1,
-            padx=8,
-            pady=8,
-            bg="#0f172a",
-            fg="#e5eefc",
-            insertbackground="#e5eefc",
-            yscrollcommand=error_scrollbar.set,
-        )
-        error_scrollbar.config(command=error_box.yview)
-        error_box.insert("1.0", error_text)
-        error_box.pack(side="left", fill="both", expand=True)
-        error_scrollbar.pack(side="right", fill="y")
+        if technical_details:
+            error_frame = ttk.Frame(body)
+            error_frame.pack(fill="both", expand=True)
+            error_scrollbar = ttk.Scrollbar(error_frame, orient="vertical")
+            error_box = tk.Text(
+                error_frame,
+                height=10,
+                wrap="word",
+                relief="solid",
+                borderwidth=1,
+                padx=8,
+                pady=8,
+                bg="#0f172a",
+                fg="#e5eefc",
+                insertbackground="#e5eefc",
+                yscrollcommand=error_scrollbar.set,
+            )
+            error_scrollbar.config(command=error_box.yview)
+            error_box.insert("1.0", technical_details)
+            error_box.configure(state="disabled")
+            error_box.pack(side="left", fill="both", expand=True)
+            error_scrollbar.pack(side="right", fill="y")
 
         buttons = ttk.Frame(body)
         buttons.pack(fill="x", pady=(14, 0))
-        ttk.Button(buttons, text="Copy error", command=lambda: copy_text(error_text)).pack(side="left")
+        if technical_details:
+            ttk.Button(buttons, text="Copy technical details", command=lambda: copy_text(technical_details)).pack(side="left")
+        ttk.Button(buttons, text="Try again", command=dialog.destroy).pack(side="right")
         ttk.Button(buttons, text="Exit installer", command=root.destroy).pack(side="right")
-        dialog.protocol("WM_DELETE_WINDOW", root.destroy)
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
         dialog.wait_window()
 
     def copy_log():
@@ -731,7 +751,14 @@ def launch_gui():
             set_status("Update failed. Review the error, then try again.")
             set_progress(0)
             append_log(f"UPDATE ERROR: {message}")
-            root.after(0, lambda: show_error_dialog(error_text))
+            root.after(
+                0,
+                lambda: show_error_dialog(
+                    "CCBot update failed",
+                    "CCBot could not finish the update. Please try again. If it fails again, copy the technical details and contact support.",
+                    technical_details=error_text,
+                ),
+            )
             root.after(0, lambda: set_inputs_state("normal"))
             root.after(0, refresh_install_button)
             root.after(0, lambda: check_update_button.configure(state="normal"))
@@ -802,10 +829,39 @@ def launch_gui():
             log_path = write_failure_log(error_text)
             if log_path:
                 error_text = f"{error_text}\n\nSaved log file:\n{log_path}"
-            set_status("Installation failed. The installer will exit after you review the error.")
             set_progress(0)
-            append_log(f"ERROR: {message}")
-            root.after(0, lambda: show_error_dialog(error_text))
+            token_error = is_enrollment_token_error(message)
+
+            def recover_after_error():
+                if token_error:
+                    token_var.set("")
+                    set_status("Create a fresh install token in CyberCare AI, paste it here, then try again.")
+                    append_log("The install token was not accepted. Create a fresh token in CyberCare AI and try again.")
+                    show_error_dialog(
+                        "Install token needs to be replaced",
+                        (
+                            "This install token is no longer valid. It may be expired, already used, or revoked.\n\n"
+                            "Go back to the CyberCare AI website, create a new install token, copy it, paste it here, "
+                            "and click Try again."
+                        ),
+                    )
+                else:
+                    set_status("Installation failed. You can try again or copy the technical details for support.")
+                    append_log(f"ERROR: {message}")
+                    show_error_dialog(
+                        "CCBot installation failed",
+                        (
+                            "CCBot could not finish installation. Please try again. If it fails again, "
+                            "copy the technical details and contact support."
+                        ),
+                        technical_details=error_text,
+                    )
+                set_inputs_state("normal")
+                check_update_button.configure(state="normal")
+                refresh_install_button()
+                token_entry.focus_set()
+
+            root.after(0, recover_after_error)
         else:
             root.after(0, lambda: install_button.configure(text="Finish", state="normal", command=finish))
 

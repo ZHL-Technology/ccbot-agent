@@ -4,7 +4,7 @@ CCBot Agent is the installable monitoring agent for CyberCare AI. The Linux
 agent runs as a managed service today, and the Windows installer preview gives
 desktop and Windows Server users a simple token-based setup path.
 
-Current version: `0.1.10`
+Current version: `0.1.11`
 
 Status: preview foundation. The agent is ready for controlled testing and will
 continue to evolve with signed releases, stronger policy controls, and deeper
@@ -111,7 +111,7 @@ Use a pinned release tag for repeatable installs:
 ```bash
 export CCBOT_PLATFORM_URL="https://cybercareai.io"
 export CCBOT_ENROLLMENT_TOKEN="PASTE_ONE_TIME_TOKEN_HERE"
-export CCBOT_AGENT_VERSION="v0.1.10"
+export CCBOT_AGENT_VERSION="v0.1.11"
 
 curl -fsSL "https://raw.githubusercontent.com/ZHL-Technology/ccbot-agent/${CCBOT_AGENT_VERSION}/install.sh" -o /tmp/ccbot-agent-install.sh
 sudo CCBOT_PLATFORM_URL="$CCBOT_PLATFORM_URL" CCBOT_ENROLLMENT_TOKEN="$CCBOT_ENROLLMENT_TOKEN" bash /tmp/ccbot-agent-install.sh
@@ -131,7 +131,7 @@ CCBot-Windows-Installer.exe
 Download path for tagged releases:
 
 ```text
-https://github.com/ZHL-Technology/ccbot-agent/releases/download/v0.1.10/CCBot-Windows-Installer-v0.1.10.exe
+https://github.com/ZHL-Technology/ccbot-agent/releases/download/v0.1.11/CCBot-Windows-Installer-v0.1.11.exe
 ```
 
 The installer asks for:
@@ -149,6 +149,10 @@ update manifest for newer releases. When an update is available, it asks the
 user before downloading the new installer, replaces the installed background
 agent executable, refreshes Windows startup registration, and restarts CCBot
 without asking for a new enrollment token.
+
+If the one-time enrollment token is invalid, expired, already used, or revoked,
+the installer shows a plain-language retry message, clears the token field, and
+lets the user paste a fresh token without closing the app.
 
 This preview is intended to remove terminal work from the normal Windows user
 path. Windows SmartScreen may warn that the first preview builds are
@@ -238,7 +242,7 @@ python3 -m ccbot_agent.main --version
 For a controlled upgrade, choose the release tag explicitly:
 
 ```bash
-export CCBOT_AGENT_VERSION="v0.1.10"
+export CCBOT_AGENT_VERSION="v0.1.11"
 curl -fsSL "https://raw.githubusercontent.com/ZHL-Technology/ccbot-agent/${CCBOT_AGENT_VERSION}/install.sh" -o /tmp/ccbot-agent-install.sh
 sudo CCBOT_PLATFORM_URL="https://cybercareai.io" CCBOT_ENROLLMENT_TOKEN="PASTE_ONE_TIME_TOKEN_HERE" bash /tmp/ccbot-agent-install.sh
 ```
@@ -280,19 +284,19 @@ Version data is kept in:
 - `pyproject.toml`
 - `ccbot_agent/__init__.py`
 - `install.sh`
-- Git tags such as `v0.1.10`
+- Git tags such as `v0.1.11`
 
 To prepare a future version:
 
 ```bash
-python3 scripts/bump_version.py 0.1.10
+python3 scripts/bump_version.py 0.1.11
 ```
 
 Then update `CHANGELOG.md`, commit the change, and create a signed or annotated
 release tag:
 
 ```bash
-git tag -a v0.1.10 -m "CCBot Agent v0.1.10"
+git tag -a v0.1.11 -m "CCBot Agent v0.1.11"
 git push origin main --tags
 ```
 
